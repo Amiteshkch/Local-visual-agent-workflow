@@ -1,0 +1,46 @@
+# docker-compose.yml
+# Runs the full workflow engine stack
+#
+# Usage:
+#   docker compose up          → start everything
+#   docker compose up -d       → start in background (detached)
+#   docker compose down        → stop everything
+#   docker compose logs -f     → tail live logs
+
+version: "3.9"
+
+services:
+
+  # ── Workflow Engine API ───────────────────────────────────────────────────────
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: workflow-engine
+    restart: unless-stopped          # auto-restart on crash or server reboot
+    ports:
+      - "3001:3001"                  # API accessible at http://localhost:3001
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    volumes:
+      # Persist workflows and logs outside the container
+      # So your data survives container restarts and image rebuilds
+      - workflow_data:/app/storage/workflows
+      - workflow_logs:/app/storage/logs
+      - workflow_creds:/app/storage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# ── Named volumes (data persists across container restarts) ───────────────────
+volumes:
+  workflow_data:
+    name: workflow_engine_data
+  workflow_logs:
+    name: workflow_engine_logs
+  workflow_creds:
+    name: workflow_engine_creds

@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+.env
+.env.*
+storage/credentials.json
+storage/logs/*
+storage/workflows/*
+*.zip
+.DS_Store
+.git
+.gitignore
+README.md

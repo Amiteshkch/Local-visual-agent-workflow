@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Researcher Scout — Interactive GUI</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #060608; --bg1: #0d0d10; --bg2: #121215; --bg3: #1a1a1e;
+      --border: #1f1f26; --border2: #2a2a32;
+      --text: #e2e2e8; --muted: #666678; --dim: #33333e;
+      --amber: #f59e0b; --green: #10b981; --red: #ef4444; --blue: #3b82f6;
+      --purple: #8b5cf6; --orange: #f97316;
+      --mono: 'IBM Plex Mono', monospace;
+    }
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap');
+    html, body, #root { height: 100%; }
+    body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 13px; overflow: hidden; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+    button { cursor: pointer; font-family: var(--mono); }
+    select { font-family: var(--mono); }
+    textarea { font-family: var(--mono); }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+    .fade-in { animation: fadeIn 0.25s ease forwards; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { display: inline-block; animation: spin 1s linear infinite; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const API = "http://localhost:3001";
+
+const MATCH_COLOR = { High:"#10b981", Medium:"#f59e0b", Low:"#f97316", Minimal:"#666678" };
+const MATCH_BG    = { High:"#10b98115", Medium:"#f59e0b15", Low:"#f9731615", Minimal:"#66667815" };
+
+function Badge({ label }) {
+  const color = MATCH_COLOR[label] || "#666678";
+  return <span style={{ padding:"2px 8px", borderRadius:4, background:`${color}22`, color, fontSize:10, fontWeight:700, border:`1px solid ${color}44` }}>{label}</span>;
+}
+
+function PubCard({ pub }) {
+  const year  = pub.publication_year || "?";
+  const cited = pub.cited_by_count || 0;
+  const venue = pub.primary_location?.source?.display_name || pub.primary_location?.source?.host_organization_name || "";
+  const doi   = pub.doi ? `https://doi.org/${pub.doi.replace("https://doi.org/","")}` : null;
+  return (
+    <div style={{ padding:"10px 12px", background:"var(--bg3)", borderRadius:6, marginBottom:8, borderLeft:"3px solid var(--blue)" }}>
+      <div style={{ fontSize:12, fontWeight:500, marginBottom:4, lineHeight:1.5 }}>
+        {doi ? <a href={doi} target="_blank" rel="noreferrer" style={{ color:"var(--blue)", textDecoration:"none" }}>{pub.title}</a> : pub.title}
+      </div>
+      <div style={{ fontSize:10, color:"var(--muted)", display:"flex", gap:12 }}>
+        <span>{year}</span>
+        {venue && <span>{venue.slice(0,50)}</span>}
+        <span style={{ color:"var(--amber)" }}>cited: {cited}</span>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [data,       setData]       = useState(null);
+  const [selected,   setSelected]   = useState(null);
+  const [pubs,       setPubs]       = useState([]);
+  const [pubLoading, setPubLoading] = useState(false);
+  const [email,      setEmail]      = useState("");
+  const [emailSub,   setEmailSub]   = useState("");
+  const [emailTo,    setEmailTo]    = useState("");
+  const [genLoading,     setGenLoading]     = useState(false);
+  const [humanizeLoading,setHumanizeLoading]= useState(false);
+  const [copied,         setCopied]         = useState(false);
+  const [error,      setError]      = useState("");
+  const emailRef = useRef(null);
+
+  // Load researcher results
+  useEffect(() => {
+    fetch(`${API}/api/researcher-results`)
+      .then(r => r.json())
+      .then(d => { if (d.researchers?.length) setData(d); })
+      .catch(() => setError("Could not connect to backend at localhost:3001"));
+  }, []);
+
+  // Fetch OpenAlex publications when a researcher is selected
+  useEffect(() => {
+    if (!selected) return;
+    setPubs([]); setEmail(""); setCopied(false);
+    const authorId = selected.profile_url?.split("/").pop();
+    if (!authorId || !authorId.startsWith("A")) return;
+    setPubLoading(true);
+    fetch(`https://api.openalex.org/works?filter=authorships.author.id:${authorId}&sort=publication_year:desc,cited_by_count:desc&per-page=8&select=id,title,publication_year,cited_by_count,primary_location,doi`, {
+      headers: { "User-Agent": "https://github.com/Amiteshkch" }
+    })
+      .then(r => r.json())
+      .then(d => setPubs(d.results || []))
+      .catch(() => setPubs([]))
+      .finally(() => setPubLoading(false));
+  }, [selected]);
+
+  const handleProceed = useCallback(async () => {
+    if (!selected) return;
+    setGenLoading(true); setEmail(""); setCopied(false);
+    try {
+      const res = await fetch(`${API}/api/generate-researcher-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ researcher: selected }),
+      });
+      const d = await res.json();
+      if (d.error) { setError(d.error); return; }
+      setEmail(d.emailBody || "");
+      setEmailSub(d.subject || "");
+      setEmailTo(d.to || selected.contact_email || "");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setGenLoading(false);
+    }
+  }, [selected]);
+
+  const handleHumanize = useCallback(async () => {
+    if (!email) return;
+    setHumanizeLoading(true); setCopied(false);
+    try {
+      const res = await fetch(`${API}/api/humanize-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailBody: email }),
+      });
+      const d = await res.json();
+      if (d.error) { setError(d.error); return; }
+      setEmail(d.emailBody || email);
+    } catch (e) { setError(e.message); }
+    finally { setHumanizeLoading(false); }
+  }, [email]);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(email).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
+  };
+
+  const handleGmail = () => {
+    const url = `https://mail.google.com/mail/?view=cm&to=${encodeURIComponent(emailTo)}&su=${encodeURIComponent(emailSub)}&body=${encodeURIComponent(email)}`;
+    window.open(url, "_blank");
+  };
+
+  const handleOutlook = () => {
+    const url = `https://outlook.live.com/mail/0/deeplink/compose?to=${encodeURIComponent(emailTo)}&subject=${encodeURIComponent(emailSub)}&body=${encodeURIComponent(email)}`;
+    window.open(url, "_blank");
+  };
+
+  const researchers = data?.researchers || [];
+  const stats = {
+    total:  researchers.length,
+    high:   researchers.filter(r => r.likely_match === "High").length,
+    medium: researchers.filter(r => r.likely_match === "Medium").length,
+    low:    researchers.filter(r => r.likely_match === "Low").length,
+    minimal:researchers.filter(r => r.likely_match === "Minimal").length,
+  };
+
+  const inputStyle = { width:"100%", padding:"8px 10px", background:"var(--bg1)", border:"1px solid var(--border2)", borderRadius:6, color:"var(--text)", fontSize:12, outline:"none" };
+  const btnStyle = (color, bg) => ({ padding:"9px 18px", background:bg, border:`1px solid ${color}44`, borderRadius:6, color, fontSize:12, fontWeight:600, cursor:"pointer", transition:"opacity 0.15s" });
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:"100vh", overflow:"hidden" }}>
+
+      {/* Header */}
+      <div style={{ padding:"0 20px", height:50, background:"var(--bg1)", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <span style={{ fontSize:18 }}>🔬</span>
+          <div>
+            <div style={{ fontWeight:600, fontSize:13 }}>Researcher Scout</div>
+            <div style={{ fontSize:10, color:"var(--muted)" }}>Interactive Faculty Explorer</div>
+          </div>
+        </div>
+        {data?.savedAt && (
+          <div style={{ fontSize:10, color:"var(--muted)" }}>
+            Last scan: {new Date(data.savedAt).toLocaleString("en-IN", { timeZone:"Asia/Kolkata" })} IST
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ padding:"10px 20px", background:"#ef444415", borderBottom:"1px solid var(--red)", fontSize:11, color:"var(--red)" }}>
+          ✗ {error}
+        </div>
+      )}
+
+      {/* Main layout */}
+      <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
+
+        {/* Left panel */}
+        <div style={{ width:300, flexShrink:0, borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column", overflow:"hidden", background:"var(--bg1)" }}>
+
+          {/* Stats */}
+          <div style={{ padding:"14px 16px", borderBottom:"1px solid var(--border)" }}>
+            <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:10 }}>Scan Results</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              {[["Total", stats.total, "var(--text)"], ["🟢 High", stats.high, "var(--green)"], ["🟡 Medium", stats.medium, "var(--amber)"], ["🟠 Low", stats.low, "var(--orange)"], ["⚪ Minimal", stats.minimal, "var(--muted)"]].map(([label, val, color]) => (
+                <div key={label} style={{ background:"var(--bg2)", borderRadius:6, padding:"8px 10px" }}>
+                  <div style={{ fontSize:10, color:"var(--muted)" }}>{label}</div>
+                  <div style={{ fontSize:20, fontWeight:700, color }}>{val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Dropdown */}
+          <div style={{ padding:"14px 16px", borderBottom:"1px solid var(--border)" }}>
+            <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>
+              Select Researcher ({researchers.length})
+            </div>
+            <select
+              value={selected?.name || ""}
+              onChange={e => setSelected(researchers.find(r => r.name === e.target.value) || null)}
+              style={{ ...inputStyle, height:38 }}
+            >
+              <option value="">— Choose a researcher —</option>
+              {researchers.map((r, i) => (
+                <option key={i} value={r.name}>
+                  {r.match_pct}% · {r.name} · {r.country || "Unknown"}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Selected researcher mini-card */}
+          {selected && (
+            <div className="fade-in" style={{ padding:"14px 16px", flex:1, overflow:"auto" }}>
+              <div style={{ marginBottom:10 }}>
+                <Badge label={selected.likely_match} />
+                <span style={{ marginLeft:8, fontSize:11, color:"var(--amber)", fontWeight:700 }}>{selected.match_pct}% match</span>
+              </div>
+              <div style={{ fontSize:12, fontWeight:600, marginBottom:4 }}>{selected.name}</div>
+              <div style={{ fontSize:11, color:"var(--muted)", marginBottom:2 }}>{selected.institution}</div>
+              <div style={{ fontSize:11, color:"var(--muted)", marginBottom:10 }}>{selected.country}</div>
+
+              {selected.contact_email && (
+                <div style={{ fontSize:11, marginBottom:6 }}>
+                  <span style={{ color:"var(--muted)" }}>📧 </span>
+                  <a href={`mailto:${selected.contact_email}`} style={{ color:"var(--blue)" }}>{selected.contact_email}</a>
+                </div>
+              )}
+              {selected.profile_url && (
+                <div style={{ fontSize:11, marginBottom:6 }}>
+                  <a href={selected.profile_url} target="_blank" rel="noreferrer" style={{ color:"var(--blue)" }}>🔗 OpenAlex Profile</a>
+                </div>
+              )}
+              {selected.orcid && (
+                <div style={{ fontSize:11, marginBottom:10 }}>
+                  <a href={selected.orcid} target="_blank" rel="noreferrer" style={{ color:"var(--blue)" }}>📖 ORCID</a>
+                </div>
+              )}
+
+              <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>Hiring Probability</div>
+              <div style={{ fontSize:11, marginBottom:12, color: selected.hiring_probability === "High" ? "var(--green)" : selected.hiring_probability === "Medium" ? "var(--amber)" : "var(--muted)" }}>
+                {selected.hiring_probability || "Unknown"}
+              </div>
+
+              <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>Fellowship Options</div>
+              <div style={{ fontSize:11, marginBottom:12, lineHeight:1.7, color:"var(--text)" }}>
+                {selected.fellowship_eligibility || "Check eligibility"}
+              </div>
+
+              <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>Expected Start</div>
+              <div style={{ fontSize:11, marginBottom:12 }}>{selected.expected_start || "Not specified"}</div>
+
+              <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>Duration</div>
+              <div style={{ fontSize:11 }}>{selected.project_duration || "Typically 2-3 years"}</div>
+            </div>
+          )}
+
+          {!selected && !data && (
+            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--muted)", fontSize:12, padding:20, textAlign:"center" }}>
+              {researchers.length === 0 ? "No scan data yet.\nRun the researcher agent first." : "Select a researcher from the dropdown above."}
+            </div>
+          )}
+        </div>
+
+        {/* Right panel */}
+        <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+          {!selected ? (
+            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, color:"var(--muted)" }}>
+              <div style={{ fontSize:40 }}>🔬</div>
+              <div style={{ fontSize:14 }}>Select a researcher from the left panel</div>
+              <div style={{ fontSize:11 }}>Researchers are sorted by match probability (highest first)</div>
+            </div>
+          ) : (
+            <div style={{ flex:1, overflow:"auto", padding:"20px 24px" }}>
+
+              {/* Researcher header */}
+              <div className="fade-in" style={{ marginBottom:20, padding:"16px 20px", background:"var(--bg2)", borderRadius:8, border:"1px solid var(--border)", borderLeft:`4px solid ${MATCH_COLOR[selected.likely_match] || "var(--blue)"}` }}>
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8, flexWrap:"wrap" }}>
+                  <div style={{ fontSize:18, fontWeight:700 }}>{selected.name}</div>
+                  <Badge label={selected.likely_match} />
+                  <span style={{ fontSize:13, color:"var(--amber)", fontWeight:700 }}>{selected.match_pct}%</span>
+                </div>
+                <div style={{ fontSize:13, color:"var(--muted)", marginBottom:4 }}>{selected.department && `${selected.department} · `}{selected.institution}</div>
+                <div style={{ fontSize:12, color:"var(--muted)" }}>{selected.country}</div>
+
+                {selected.topics?.length > 0 && (
+                  <div style={{ marginTop:10, display:"flex", gap:6, flexWrap:"wrap" }}>
+                    {selected.topics.map((t, i) => (
+                      <span key={i} style={{ padding:"2px 8px", background:"var(--bg3)", borderRadius:4, fontSize:10, color:"var(--blue)", border:"1px solid var(--border2)" }}>{t}</span>
+                    ))}
+                  </div>
+                )}
+
+                {selected.funding_info && (
+                  <div style={{ marginTop:10, fontSize:11, color:"var(--green)", background:"#10b98110", padding:"6px 10px", borderRadius:4 }}>
+                    💰 {selected.funding_info}
+                  </div>
+                )}
+                {selected.hiring_signal && (
+                  <div style={{ marginTop:6, fontSize:11, color:"var(--amber)", background:"#f59e0b10", padding:"6px 10px", borderRadius:4 }}>
+                    🔔 {selected.hiring_signal}
+                  </div>
+                )}
+              </div>
+
+              {/* Key skills required + to develop */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>
+                {selected.key_skills_required?.length > 0 && (
+                  <div style={{ padding:"14px 16px", background:"var(--bg2)", borderRadius:8, border:"1px solid var(--border)" }}>
+                    <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>Key Skills Required</div>
+                    {selected.key_skills_required.map((s, i) => <div key={i} style={{ fontSize:11, marginBottom:4 }}>✓ {s}</div>)}
+                  </div>
+                )}
+                {selected.skills_to_develop?.length > 0 && (
+                  <div style={{ padding:"14px 16px", background:"var(--bg2)", borderRadius:8, border:"1px solid var(--border)" }}>
+                    <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>Skills to Develop</div>
+                    {selected.skills_to_develop.map((s, i) => <div key={i} style={{ fontSize:11, marginBottom:4, color:"var(--amber)" }}>▸ {s}</div>)}
+                  </div>
+                )}
+              </div>
+
+              {/* Project highlights */}
+              {selected.project_highlights && (
+                <div style={{ padding:"14px 16px", background:"var(--bg2)", borderRadius:8, border:"1px solid var(--border)", marginBottom:20 }}>
+                  <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>Project Highlights</div>
+                  <div style={{ fontSize:12, lineHeight:1.7 }}>{selected.project_highlights}</div>
+                </div>
+              )}
+
+              {/* Contact strategy */}
+              {selected.contact_strategy && (
+                <div style={{ padding:"14px 16px", background:"var(--bg2)", borderRadius:8, border:"1px solid var(--border)", marginBottom:20 }}>
+                  <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>Contact Strategy</div>
+                  <div style={{ fontSize:12, lineHeight:1.7, color:"var(--green)" }}>{selected.contact_strategy}</div>
+                </div>
+              )}
+
+              {/* Recent publications */}
+              <div style={{ marginBottom:20 }}>
+                <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:12 }}>
+                  📚 Recent Publications (OpenAlex)
+                  {pubLoading && <span className="spin" style={{ marginLeft:8 }}>⟳</span>}
+                </div>
+                {pubs.length > 0 ? pubs.map((p, i) => <PubCard key={i} pub={p} />) : !pubLoading && (
+                  <div style={{ fontSize:11, color:"var(--muted)", padding:"20px 0" }}>
+                    {selected.profile_url?.startsWith("https://openalex.org/A") ? "No publications found on OpenAlex." : "Publications not available (no OpenAlex profile)."}
+                  </div>
+                )}
+              </div>
+
+              {/* Resources */}
+              {selected.resources?.length > 0 && (
+                <div style={{ padding:"14px 16px", background:"var(--bg2)", borderRadius:8, border:"1px solid var(--border)", marginBottom:20 }}>
+                  <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>Skill Resources</div>
+                  {selected.resources.map((r, i) => <div key={i} style={{ fontSize:11, marginBottom:4 }}>→ {r}</div>)}
+                </div>
+              )}
+
+              {/* Proceed button */}
+              <div style={{ marginBottom:20 }}>
+                <button
+                  onClick={handleProceed}
+                  disabled={genLoading}
+                  style={{ ...btnStyle("var(--amber)", "#f59e0b20"), width:"100%", padding:"12px", fontSize:13, fontWeight:700, opacity: genLoading ? 0.6 : 1 }}
+                >
+                  {genLoading ? <><span className="spin">⟳</span> Generating personalised email…</> : "✉️  Proceed — Generate Email to Prof. " + selected.name.split(" ").pop()}
+                </button>
+              </div>
+
+              {/* Generated email */}
+              {email && (
+                <div className="fade-in" style={{ marginBottom:24 }}>
+                  <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>
+                    Generated Email Body
+                  </div>
+
+                  {/* Subject line */}
+                  <div style={{ padding:"8px 12px", background:"var(--bg3)", borderRadius:"6px 6px 0 0", border:"1px solid var(--border2)", borderBottom:"none", fontSize:11 }}>
+                    <span style={{ color:"var(--muted)" }}>Subject: </span>{emailSub}
+                  </div>
+                  {emailTo && (
+                    <div style={{ padding:"6px 12px", background:"var(--bg3)", border:"1px solid var(--border2)", borderBottom:"none", borderTop:"1px solid var(--border)", fontSize:11 }}>
+                      <span style={{ color:"var(--muted)" }}>To: </span>
+                      <a href={`mailto:${emailTo}`} style={{ color:"var(--blue)" }}>{emailTo}</a>
+                    </div>
+                  )}
+
+                  {/* Email body */}
+                  <textarea
+                    ref={emailRef}
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    style={{ width:"100%", minHeight:320, padding:"14px 16px", background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:"0 0 6px 6px", color:"var(--text)", fontSize:12, lineHeight:1.8, resize:"vertical", outline:"none" }}
+                  />
+
+                  {/* Humanize button */}
+                  <button
+                    onClick={handleHumanize}
+                    disabled={humanizeLoading}
+                    style={{ ...btnStyle("var(--purple)", "#8b5cf615"), width:"100%", marginTop:10, opacity: humanizeLoading ? 0.6 : 1 }}
+                  >
+                    {humanizeLoading ? <><span className="spin">⟳</span> Making it more human…</> : "✨ Make More Human-Like"}
+                  </button>
+
+                  {/* Action buttons */}
+                  <div style={{ display:"flex", gap:10, marginTop:8, flexWrap:"wrap" }}>
+                    <button onClick={handleCopy} style={{ ...btnStyle(copied ? "var(--green)" : "var(--blue)", copied ? "#10b98115" : "#3b82f615"), flex:1 }}>
+                      {copied ? "✓ Copied!" : "📋 Copy to Clipboard"}
+                    </button>
+                    <button onClick={handleGmail} style={{ ...btnStyle("var(--text)", "var(--bg3)"), flex:1 }}>
+                      📧 Draft in Gmail
+                    </button>
+                    <button onClick={handleOutlook} style={{ ...btnStyle("var(--text)", "var(--bg3)"), flex:1 }}>
+                      📬 Draft in Outlook
+                    </button>
+                  </div>
+                  <div style={{ marginTop:8, fontSize:10, color:"var(--muted)" }}>
+                    Tip: Edit the email body above before copying. You can click ✨ multiple times to keep refining.
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding:"6px 20px", borderTop:"1px solid var(--border)", background:"var(--bg1)", display:"flex", justifyContent:"space-between", fontSize:10, color:"var(--dim)", flexShrink:0 }}>
+        <span>Researcher Scout GUI · backend: localhost:3001</span>
+        <div style={{ display:"flex", gap:16 }}>
+          <a href="http://localhost:3001/api/researcher-results" target="_blank" rel="noreferrer" style={{ color:"var(--dim)", textDecoration:"none" }}>results api</a>
+          <a href="dashboard.html" target="_blank" rel="noreferrer" style={{ color:"var(--dim)", textDecoration:"none" }}>dashboard</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

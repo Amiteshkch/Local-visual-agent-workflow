@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workflow Engine — Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #060608;
+      --bg1:       #0d0d10;
+      --bg2:       #121215;
+      --bg3:       #1a1a1e;
+      --border:    #1f1f26;
+      --border2:   #2a2a32;
+      --text:      #e2e2e8;
+      --muted:     #666678;
+      --dim:       #33333e;
+      --amber:     #f59e0b;
+      --amber-dim: #f59e0b22;
+      --green:     #10b981;
+      --green-dim: #10b98120;
+      --red:       #ef4444;
+      --red-dim:   #ef444420;
+      --blue:      #3b82f6;
+      --purple:    #8b5cf6;
+      --mono:      'IBM Plex Mono', monospace;
+      --sans:      'IBM Plex Sans', sans-serif;
+    }
+
+    html, body, #root { height: 100%; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    /* Subtle scanline overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.03) 2px,
+        rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes spin { to{transform:rotate(360deg)} }
+    @keyframes blink { 0%,100%{opacity:1} 49%{opacity:1} 50%{opacity:0} }
+
+    .fade-in { animation: fadeIn 0.3s ease forwards; }
+    .pulse   { animation: pulse 2s infinite; }
+    .spin    { animation: spin 1s linear infinite; display:inline-block; }
+    .blink   { animation: blink 1s step-end infinite; }
+
+    button { cursor: pointer; font-family: var(--mono); }
+    input  { font-family: var(--mono); }
+
+    /* Status dot */
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      display: inline-block; flex-shrink: 0;
+    }
+    .dot-green  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot-amber  { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+    .dot-red    { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+    .dot-dim    { background: var(--dim); }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+const API = "http://localhost:3001";
+
+// ── API helpers ───────────────────────────────────────────────────────────────
+const api = {
+  get:  (path)       => fetch(`${API}${path}`).then(r => r.json()).catch(() => null),
+  post: (path, body) => fetch(`${API}${path}`, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) }).then(r => r.json()).catch(e => ({ error: e.message })),
+  put:  (path, body) => fetch(`${API}${path}`, { method:"PUT",  headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) }).then(r => r.json()).catch(e => ({ error: e.message })),
+  del:  (path)       => fetch(`${API}${path}`, { method:"DELETE" }).then(r => r.json()).catch(() => null),
+};
+
+// ── Cron helpers (daily-time picker + raw cron) ──────────────────────────────
+const TIMEZONES = ["Asia/Kolkata","UTC","America/New_York","America/Los_Angeles","Europe/London","Europe/Berlin","Asia/Singapore","Asia/Tokyo","Australia/Sydney"];
+const TZ_SHORT  = { "Asia/Kolkata":"IST", "UTC":"UTC", "America/New_York":"ET", "America/Los_Angeles":"PT", "Europe/London":"GMT/BST", "Europe/Berlin":"CET", "Asia/Singapore":"SGT", "Asia/Tokyo":"JST", "Australia/Sydney":"AEST" };
+// Parse "M H * * *" → { simple:true, hh, mm }. Anything else → { simple:false }.
+function parseCronDaily(cron) {
+  if (!cron) return { simple:false };
+  const m = String(cron).trim().match(/^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*$/);
+  if (!m) return { simple:false };
+  const mm = +m[1], hh = +m[2];
+  if (mm < 0 || mm > 59 || hh < 0 || hh > 23) return { simple:false };
+  return { simple:true, hh, mm };
+}
+function buildCronDaily(hh, mm) { return `${+mm} ${+hh} * * *`; }
+function describeCron(cron, tz) {
+  const tzShort = TZ_SHORT[tz] || tz || "";
+  const p = parseCronDaily(cron);
+  if (p.simple) return `Daily ${String(p.hh).padStart(2,"0")}:${String(p.mm).padStart(2,"0")} ${tzShort}`.trim();
+  return cron ? `cron: ${cron}${tzShort ? " · "+tzShort : ""}` : "no schedule";
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+const fmt = {
+  time: (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" }) : "—",
+  date: (iso) => iso ? new Date(iso).toLocaleDateString([], { month:"short", day:"numeric" }) : "—",
+  ms:   (ms)  => ms > 1000 ? `${(ms/1000).toFixed(1)}s` : `${ms}ms`,
+  ago:  (iso) => {
+    if (!iso) return "never";
+    const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+    if (s < 60)  return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s/60)}m ago`;
+    return `${Math.floor(s/3600)}h ago`;
+  },
+};
+
+const statusColor = s => s === "success" ? "var(--green)" : s === "running" ? "var(--amber)" : s === "partial" ? "var(--amber)" : s === "error" ? "var(--red)" : "var(--dim)";
+const statusIcon  = s => s === "success" ? "✓" : s === "running" ? "⟳" : s === "error" ? "✗" : s === "partial" ? "⚠" : "·";
+
+// ── Components ────────────────────────────────────────────────────────────────
+
+function StatCard({ label, value, sub, accent }) {
+  return (
+    <div style={{ padding:"16px 20px", background:"var(--bg2)", border:"1px solid var(--border)", borderRadius:8, borderTop:`2px solid ${accent || "var(--border2)"}` }}>
+      <div style={{ fontSize:11, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>{label}</div>
+      <div style={{ fontSize:28, fontWeight:600, color: accent || "var(--text)", letterSpacing:"-0.02em", lineHeight:1 }}>{value ?? "—"}</div>
+      {sub && <div style={{ fontSize:10, color:"var(--muted)", marginTop:6 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function ScheduleEditor({ scheduleNode, onSave, onCancel }) {
+  const cfg = scheduleNode.config || {};
+  const parsed = parseCronDaily(cfg.cron);
+  const [tz, setTz]           = useState(cfg.timezone || "Asia/Kolkata");
+  const [hh, setHh]           = useState(parsed.simple ? String(parsed.hh).padStart(2,"0") : "06");
+  const [mm, setMm]           = useState(parsed.simple ? String(parsed.mm).padStart(2,"0") : "00");
+  const [advanced, setAdv]    = useState(!parsed.simple);
+  const [rawCron, setRawCron] = useState(cfg.cron || "0 6 * * *");
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState(null);
+
+  const handleSave = async () => {
+    setError(null);
+    let cron;
+    if (advanced) {
+      cron = rawCron.trim();
+      if (!cron.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/)) { setError("Cron must have 5 space-separated fields"); return; }
+    } else {
+      const H = parseInt(hh, 10), M = parseInt(mm, 10);
+      if (isNaN(H) || H < 0 || H > 23) { setError("Hour must be 0–23"); return; }
+      if (isNaN(M) || M < 0 || M > 59) { setError("Minute must be 0–59"); return; }
+      cron = buildCronDaily(H, M);
+    }
+    setSaving(true);
+    const newCfg = { ...cfg, cron, timezone: tz, label: parseCronDaily(cron).simple ? `${String(parseCronDaily(cron).hh).padStart(2,"0")}:${String(parseCronDaily(cron).mm).padStart(2,"0")} ${TZ_SHORT[tz]||tz} Daily` : (cfg.label || "Custom schedule") };
+    const r = await onSave(newCfg);
+    setSaving(false);
+    if (r?.error) setError(r.error);
+  };
+
+  const inp = { padding:"5px 8px", background:"var(--bg1)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:11, fontFamily:"var(--mono)", outline:"none" };
+
+  return (
+    <div style={{ padding:"12px 16px", background:"var(--bg1)", borderTop:"1px solid var(--border)", borderBottom:"1px solid var(--border)" }}>
+      <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:10 }}>Edit schedule</div>
+
+      {!advanced && (
+        <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:10, flexWrap:"wrap" }}>
+          <span style={{ fontSize:11, color:"var(--muted)" }}>Daily at</span>
+          <input type="number" min="0" max="23" value={hh} onChange={e => setHh(e.target.value)} style={{ ...inp, width:50, textAlign:"center" }} />
+          <span style={{ color:"var(--muted)" }}>:</span>
+          <input type="number" min="0" max="59" value={mm} onChange={e => setMm(e.target.value)} style={{ ...inp, width:50, textAlign:"center" }} />
+          <select value={tz} onChange={e => setTz(e.target.value)} style={{ ...inp, padding:"5px 8px" }}>
+            {TIMEZONES.map(z => <option key={z} value={z}>{z} ({TZ_SHORT[z]||z})</option>)}
+          </select>
+        </div>
+      )}
+
+      {advanced && (
+        <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:10, flexWrap:"wrap" }}>
+          <span style={{ fontSize:11, color:"var(--muted)" }}>cron</span>
+          <input type="text" value={rawCron} onChange={e => setRawCron(e.target.value)} placeholder="M H DOM MON DOW (e.g. 30 6 * * *)" style={{ ...inp, flex:1, minWidth:180 }} />
+          <select value={tz} onChange={e => setTz(e.target.value)} style={{ ...inp, padding:"5px 8px" }}>
+            {TIMEZONES.map(z => <option key={z} value={z}>{z} ({TZ_SHORT[z]||z})</option>)}
+          </select>
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        <button onClick={handleSave} disabled={saving}
+          style={{ padding:"5px 14px", background:"var(--amber)", border:"none", color:"#000", borderRadius:4, fontSize:11, fontWeight:700 }}>
+          {saving ? <span className="spin">⟳</span> : "Save"}
+        </button>
+        <button onClick={onCancel} disabled={saving}
+          style={{ padding:"5px 14px", background:"transparent", border:"1px solid var(--border2)", color:"var(--muted)", borderRadius:4, fontSize:11 }}>
+          Cancel
+        </button>
+        <button onClick={() => setAdv(v => !v)}
+          style={{ marginLeft:"auto", padding:"4px 8px", background:"transparent", border:"none", color:"var(--blue)", fontSize:10 }}>
+          {advanced ? "← Use picker" : "Advanced (cron) →"}
+        </button>
+      </div>
+
+      {error && <div style={{ marginTop:8, fontSize:10, color:"var(--red)" }}>✗ {error}</div>}
+    </div>
+  );
+}
+
+function WorkflowCard({ workflow, onRun, onDelete, onSaveSchedule, runningId }) {
+  const isRunning = runningId === workflow.id;
+  const lastLog   = workflow._lastLog;
+  const scheduleNode = (workflow.nodes||[]).find(n => n.type === "schedule");
+  const hasSchedule = !!scheduleNode;
+  const hasWebhook  = (workflow.nodes||[]).some(n => n.type === "webhook");
+  const nodeTypes   = [...new Set((workflow.nodes||[]).map(n => n.type))];
+  const [editingSched, setEditingSched] = useState(false);
+
+  const NODE_ICONS = { manual:"▶", webhook:"⚡", schedule:"◷", gmail:"✉", slack:"◈", notion:"◻", http:"⟳", claude:"◉", transform:"⚙", ifelse:"◇", merge:"⊕" };
+  const NODE_COLORS = { manual:"#f59e0b", webhook:"#f59e0b", schedule:"#f59e0b", gmail:"#4285f4", slack:"#a855f7", notion:"#e5e5e5", http:"#10b981", claude:"#8b5cf6", transform:"#6366f1", ifelse:"#10b981", merge:"#10b981" };
+
+  const handleSaveSched = async (newCfg) => {
+    const r = await onSaveSchedule(workflow, scheduleNode.id, newCfg);
+    if (!r?.error) setEditingSched(false);
+    return r;
+  };
+
+  return (
+    <div className="fade-in" style={{ background:"var(--bg2)", border:`1px solid ${isRunning ? "var(--amber)" : "var(--border)"}`, borderRadius:8, overflow:"hidden", transition:"border-color 0.3s", boxShadow: isRunning ? "0 0 20px var(--amber-dim)" : "none" }}>
+      {/* Card header */}
+      <div style={{ padding:"12px 16px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", gap:8, background: isRunning ? "var(--amber-dim)" : "transparent" }}>
+        <span className={`dot dot-${lastLog?.status === "success" ? "green" : lastLog?.status === "error" ? "red" : "dim"}`} />
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:"var(--text)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{workflow.name}</div>
+          <div style={{ fontSize:10, color:"var(--muted)", marginTop:2 }}>
+            {(workflow.nodes||[]).length} nodes · {(workflow.connections||[]).length} connections
+            {hasSchedule && <span style={{ marginLeft:8, color:"var(--amber)" }}>◷ {describeCron(scheduleNode.config?.cron, scheduleNode.config?.timezone)}</span>}
+            {hasWebhook  && <span style={{ marginLeft:8, color:"var(--blue)" }}>⚡ webhook</span>}
+          </div>
+        </div>
+        <button onClick={() => onRun(workflow)} disabled={isRunning} title="Run now"
+          style={{ padding:"5px 12px", background: isRunning ? "transparent" : "var(--amber)", border: isRunning ? "1px solid var(--amber)" : "none", color: isRunning ? "var(--amber)" : "#000", borderRadius:5, fontSize:11, fontWeight:700, transition:"all 0.2s", flexShrink:0 }}>
+          {isRunning ? <span className="spin">⟳</span> : "▶ Run"}
+        </button>
+        {hasSchedule && (
+          <button onClick={() => setEditingSched(v => !v)} title={editingSched ? "Close editor" : "Edit schedule"}
+            style={{ padding:"5px 10px", background: editingSched ? "var(--amber-dim)" : "transparent", border:`1px solid ${editingSched ? "var(--amber)" : "var(--border2)"}`, color: editingSched ? "var(--amber)" : "var(--muted)", borderRadius:5, fontSize:11, fontWeight:600, flexShrink:0 }}>
+            ◷ ✎
+          </button>
+        )}
+      </div>
+
+      {/* Inline schedule editor */}
+      {editingSched && hasSchedule && (
+        <ScheduleEditor scheduleNode={scheduleNode} onSave={handleSaveSched} onCancel={() => setEditingSched(false)} />
+      )}
+
+      {/* Node type pills */}
+      <div style={{ padding:"10px 16px", display:"flex", gap:6, flexWrap:"wrap", borderBottom:"1px solid var(--border)" }}>
+        {nodeTypes.map(type => (
+          <span key={type} style={{ padding:"2px 8px", background:`${NODE_COLORS[type] || "#888"}15`, border:`1px solid ${NODE_COLORS[type] || "#888"}33`, borderRadius:20, fontSize:10, color: NODE_COLORS[type] || "#888" }}>
+            {NODE_ICONS[type] || "○"} {type}
+          </span>
+        ))}
+      </div>
+
+      {/* Last execution */}
+      <div style={{ padding:"10px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ fontSize:10, color:"var(--muted)" }}>
+          {lastLog ? (
+            <span>Last run <span style={{ color:"var(--text)" }}>{fmt.ago(lastLog.startedAt)}</span> · <span style={{ color: statusColor(lastLog.status) }}>{statusIcon(lastLog.status)} {lastLog.status}</span> · {fmt.ms(lastLog.duration)}</span>
+          ) : <span>Never run</span>}
+        </div>
+        <button onClick={() => onDelete(workflow.id)} style={{ background:"none", border:"none", color:"var(--dim)", fontSize:14, padding:"0 4px", transition:"color 0.15s" }}
+          onMouseEnter={e => e.currentTarget.style.color="var(--red)"}
+          onMouseLeave={e => e.currentTarget.style.color="var(--dim)"}>×</button>
+      </div>
+    </div>
+  );
+}
+
+function LogRow({ log }) {
+  const [expanded, setExpanded] = useState(false);
+  const color = statusColor(log.status);
+
+  return (
+    <div style={{ borderBottom:"1px solid var(--border)", overflow:"hidden" }}>
+      <div onClick={() => setExpanded(v => !v)} style={{ display:"flex", gap:12, padding:"8px 16px", cursor:"pointer", transition:"background 0.1s" }}
+        onMouseEnter={e => e.currentTarget.style.background="var(--bg3)"}
+        onMouseLeave={e => e.currentTarget.style.background="transparent"}>
+        <span style={{ color:"var(--muted)", flexShrink:0, fontSize:10, paddingTop:1 }}>{fmt.time(log.startedAt)}</span>
+        <span style={{ color, flexShrink:0, width:18 }}>{statusIcon(log.status)}</span>
+        <span style={{ color:"var(--text)", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{log.workflowName}</span>
+        <span style={{ color:"var(--muted)", flexShrink:0, fontSize:10 }}>{fmt.ms(log.duration)}</span>
+        <span style={{ color:"var(--muted)", flexShrink:0, fontSize:10 }}>{expanded ? "▲" : "▼"}</span>
+      </div>
+      {expanded && (
+        <div style={{ background:"var(--bg1)", padding:"8px 16px 12px 46px", borderTop:"1px solid var(--border)" }}>
+          {(log.steps||[]).map((step, i) => (
+            <div key={i} style={{ display:"flex", gap:10, padding:"3px 0", fontSize:11 }}>
+              <span style={{ color: statusColor(step.status), flexShrink:0, width:14 }}>{statusIcon(step.status)}</span>
+              <span style={{ color:"var(--muted)", flexShrink:0, width:80 }}>{step.nodeType}</span>
+              <span style={{ color:"var(--text)", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {step.error || (step.output ? JSON.stringify(step.output).slice(0, 120) : "—")}
+              </span>
+              <span style={{ color:"var(--dim)", flexShrink:0 }}>{fmt.ms(step.duration)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CredsBadge({ label, active }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:6, padding:"4px 10px", background: active ? "var(--green-dim)" : "var(--bg3)", border:`1px solid ${active ? "var(--green)" : "var(--border)"}33`, borderRadius:4 }}>
+      <span className={`dot dot-${active ? "green" : "dim"}`} />
+      <span style={{ fontSize:10, color: active ? "var(--green)" : "var(--muted)" }}>{label}</span>
+    </div>
+  );
+}
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
+function Dashboard() {
+  const [workflows,   setWorkflows]   = useState([]);
+  const [logs,        setLogs]        = useState([]);
+  const [health,      setHealth]      = useState(null);
+  const [creds,       setCreds]       = useState({});
+  const [runningId,   setRunningId]   = useState(null);
+  const [connected,   setConnected]   = useState(null); // null=checking, true, false
+  const [activeTab,   setActiveTab]   = useState("workflows"); // workflows | logs | credentials
+  const [credForm,    setCredForm]    = useState({ anthropicApiKey:"", openaiApiKey:"", geminiApiKey:"", ollamaUrl:"", customBaseUrl:"", customApiKey:"", slackToken:"", gmailUser:"", gmailAppPassword:"" });
+  const [credSaving,  setCredSaving]  = useState(false);
+  const [runResult,   setRunResult]   = useState(null);
+  const [pauseWfId,   setPauseWfId]   = useState("wf-job-search");
+  const [pauseMode,   setPauseMode]   = useState("nextday");  // nextday | range
+  const [pauseFrom,   setPauseFrom]   = useState("");
+  const [pauseTo,     setPauseTo]     = useState("");
+  const [pauseStatus, setPauseStatus] = useState(null);  // { paused, until }
+  const tickRef = useRef(0);
+
+  const refresh = useCallback(async () => {
+    const tick = ++tickRef.current;
+    const [h, wfs, ls, cs] = await Promise.all([
+      api.get("/api/health"),
+      api.get("/api/workflows"),
+      api.get("/api/logs?limit=30"),
+      api.get("/api/credentials/status"),
+    ]);
+    if (tickRef.current !== tick) return; // stale response
+
+    setConnected(!!h);
+    if (h)   setHealth(h);
+    if (cs)  setCreds(cs);
+
+    if (wfs && ls) {
+      // Attach last log to each workflow
+      const enriched = (wfs || []).map(wf => ({
+        ...wf,
+        _lastLog: (ls || []).find(l => l.workflowId === wf.id) || null,
+      }));
+      setWorkflows(enriched);
+      setLogs(ls || []);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const interval = setInterval(refresh, 5000);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
+  const handleRun = useCallback(async (workflow) => {
+    setRunningId(workflow.id);
+    setRunResult(null);
+    const result = await api.post(`/api/execute/${workflow.id}`, {});
+    setRunningId(null);
+    setRunResult(result);
+    await refresh();
+  }, [refresh]);
+
+  const handleDelete = useCallback(async (id) => {
+    if (!confirm("Delete this workflow?")) return;
+    await api.del(`/api/workflows/${id}`);
+    await refresh();
+  }, [refresh]);
+
+  const handleSaveSchedule = useCallback(async (workflow, scheduleNodeId, newConfig) => {
+    const updated = {
+      ...workflow,
+      nodes: (workflow.nodes||[]).map(n => n.id === scheduleNodeId ? { ...n, config: newConfig } : n),
+    };
+    // Strip the dashboard-only enrichment before saving
+    delete updated._lastLog;
+    const res = await api.put(`/api/workflows/${workflow.id}`, updated);
+    await refresh();
+    return res;
+  }, [refresh]);
+
+  const handleSaveCreds = useCallback(async () => {
+    setCredSaving(true);
+    await api.post("/api/credentials", credForm);
+    await refresh();
+    setCredSaving(false);
+    setCredForm({ anthropicApiKey:"", openaiApiKey:"", geminiApiKey:"", ollamaUrl:"", customBaseUrl:"", customApiKey:"", slackToken:"", gmailUser:"", gmailAppPassword:"" });
+  }, [credForm, refresh]);
+
+  const fetchPauseStatus = useCallback(async (id) => {
+    const s = await api.get(`/api/workflows/${id}/pause`);
+    if (s) setPauseStatus(s);
+  }, []);
+
+  const handlePause = useCallback(async () => {
+    const id = pauseWfId;
+    if (!id) return;
+    let body = {};
+    if (pauseMode === "nextday") {
+      body = { days: 1 };
+    } else {
+      if (!pauseTo) return alert("Please select an end date");
+      body = { until: pauseTo };
+    }
+    await api.post(`/api/workflows/${id}/pause`, body);
+    await fetchPauseStatus(id);
+  }, [pauseWfId, pauseMode, pauseTo, fetchPauseStatus]);
+
+  const handleResume = useCallback(async () => {
+    if (!pauseWfId) return;
+    await api.post(`/api/workflows/${pauseWfId}/resume`, {});
+    await fetchPauseStatus(pauseWfId);
+  }, [pauseWfId, fetchPauseStatus]);
+
+  useEffect(() => {
+    if (pauseWfId) fetchPauseStatus(pauseWfId);
+  }, [pauseWfId, fetchPauseStatus]);
+
+  // Computed stats
+  const successLogs  = logs.filter(l => l.status === "success");
+  const todayLogs    = logs.filter(l => l.startedAt && new Date(l.startedAt).toDateString() === new Date().toDateString());
+  const successRate  = logs.length ? Math.round((successLogs.length / logs.length) * 100) : 0;
+  const scheduledWfs = workflows.filter(wf => (wf.nodes||[]).some(n => n.type === "schedule"));
+
+  const inputStyle = { width:"100%", padding:"8px 12px", background:"var(--bg1)", border:"1px solid var(--border2)", borderRadius:6, color:"var(--text)", fontSize:12, fontFamily:"var(--mono)", outline:"none" };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:"100vh", overflow:"hidden" }}>
+
+      {/* ── HEADER ── */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 24px", height:52, background:"var(--bg1)", borderBottom:"1px solid var(--border)", flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <div style={{ width:28, height:28, background:"var(--amber)", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:900, color:"#000" }}>W</div>
+          <div>
+            <div style={{ fontSize:13, fontWeight:600, letterSpacing:"0.02em" }}>Workflow Engine</div>
+            <div style={{ fontSize:10, color:"var(--muted)" }}>Dashboard · auto-refresh every 5s</div>
+          </div>
+        </div>
+
+        <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+          {/* Connection status */}
+          <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:11 }}>
+            {connected === null && <><span className="spin" style={{ color:"var(--muted)" }}>⟳</span><span style={{ color:"var(--muted)" }}>connecting…</span></>}
+            {connected === true  && <><span className="dot dot-green pulse" /><span style={{ color:"var(--green)" }}>connected</span>{health && <span style={{ color:"var(--muted)" }}> · up {Math.floor(health.uptime/60)}m</span>}</>}
+            {connected === false && <><span className="dot dot-red" /><span style={{ color:"var(--red)" }}>backend offline</span><span style={{ color:"var(--muted)", fontSize:10 }}> — run: node server.js</span></>}
+          </div>
+          <div style={{ height:20, width:1, background:"var(--border)" }} />
+          {/* Cred badges */}
+          <div style={{ display:"flex", gap:6 }}>
+            <CredsBadge label="Claude"  active={creds.anthropicApiKey} />
+            <CredsBadge label="OpenAI"  active={creds.openaiApiKey} />
+            <CredsBadge label="Gemini"  active={creds.geminiApiKey} />
+            <CredsBadge label="Ollama"  active={creds.ollamaUrl} />
+            <CredsBadge label="Slack"   active={creds.slackToken} />
+            <CredsBadge label="Gmail"   active={creds.gmailToken} />
+          </div>
+          <div style={{ height:20, width:1, background:"var(--border)" }} />
+          <div style={{ fontSize:10, color:"var(--muted)" }}>{new Date().toLocaleTimeString()}</div>
+        </div>
+      </div>
+
+      {/* ── BODY ── */}
+      <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
+
+        {/* Stats row */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:12, padding:"16px 24px", flexShrink:0 }}>
+          <StatCard label="Workflows"      value={workflows.length}  sub="saved to disk"                  accent="var(--amber)" />
+          <StatCard label="Runs Today"     value={todayLogs.length}  sub={`${logs.length} total`}          accent="var(--blue)" />
+          <StatCard label="Success Rate"   value={`${successRate}%`} sub={`${successLogs.length} succeeded`} accent="var(--green)" />
+          <StatCard label="Scheduled"      value={scheduledWfs.length} sub={`${health?.scheduledJobs || 0} active cron jobs`} accent="var(--purple)" />
+        </div>
+
+        {/* Tab bar */}
+        <div style={{ display:"flex", gap:0, padding:"0 24px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
+          {[["workflows","Workflows",workflows.length],["logs","Execution Logs",logs.length],["credentials","Credentials",null]].map(([tab, label, count]) => (
+            <button key={tab} onClick={() => setActiveTab(tab)} style={{ padding:"8px 18px", background:"transparent", border:"none", borderBottom:`2px solid ${activeTab === tab ? "var(--amber)" : "transparent"}`, color: activeTab === tab ? "var(--amber)" : "var(--muted)", fontSize:12, fontWeight: activeTab === tab ? 600 : 400, transition:"all 0.15s" }}>
+              {label}{count !== null && count > 0 && <span style={{ marginLeft:6, padding:"1px 6px", background:"var(--bg3)", borderRadius:10, fontSize:10 }}>{count}</span>}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab content */}
+        <div style={{ flex:1, overflow:"auto", padding:"16px 24px" }}>
+
+          {/* ── WORKFLOWS TAB ── */}
+          {activeTab === "workflows" && (
+            <div>
+              {connected === false && (
+                <div style={{ padding:"24px", background:"var(--red-dim)", border:"1px solid var(--red)", borderRadius:8, marginBottom:16, fontSize:12, color:"var(--red)" }}>
+                  ✗ Cannot connect to backend at <strong>http://localhost:3001</strong>. Make sure the engine is running:<br />
+                  <code style={{ display:"block", marginTop:8, padding:"8px 12px", background:"var(--bg1)", borderRadius:4, color:"var(--text)" }}>cd workflow-engine && node server.js</code>
+                </div>
+              )}
+
+              {runResult && (
+                <div className="fade-in" style={{ padding:"12px 16px", background: runResult.status === "success" ? "var(--green-dim)" : "var(--red-dim)", border:`1px solid ${runResult.status === "success" ? "var(--green)" : "var(--red)"}`, borderRadius:8, marginBottom:16, fontSize:11 }}>
+                  <div style={{ fontWeight:600, marginBottom:4, color: runResult.status === "success" ? "var(--green)" : "var(--red)" }}>
+                    {statusIcon(runResult.status)} Execution {runResult.status} · {fmt.ms(runResult.duration)}
+                  </div>
+                  {(runResult.steps||[]).map((s, i) => (
+                    <div key={i} style={{ color:"var(--muted)", paddingLeft:14 }}>{statusIcon(s.status)} {s.nodeType}: {s.error || JSON.stringify(s.output||{}).slice(0,100)}</div>
+                  ))}
+                </div>
+              )}
+
+              {workflows.length === 0 && connected && (
+                <div style={{ padding:"40px 0", textAlign:"center", color:"var(--muted)" }}>
+                  <div style={{ fontSize:32, marginBottom:12 }}>⬡</div>
+                  <div>No workflows saved yet.</div>
+                  <div style={{ fontSize:11, marginTop:6 }}>Save a workflow from the builder — it will appear here automatically.</div>
+                </div>
+              )}
+
+              {/* ── Schedule Pause Control ── */}
+              {scheduledWfs.length > 0 && (
+                <div style={{ marginBottom:20, padding:"16px", background:"var(--bg2)", border:"1px solid var(--border)", borderRadius:8 }}>
+                  <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:12 }}>
+                    ⏸ Schedule Pause Control
+                  </div>
+
+                  {/* Workflow selector */}
+                  <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:12, flexWrap:"wrap" }}>
+                    <label style={{ fontSize:11, color:"var(--muted)", minWidth:80 }}>Workflow:</label>
+                    <select value={pauseWfId} onChange={e => { setPauseWfId(e.target.value); fetchPauseStatus(e.target.value); }}
+                      style={{ padding:"6px 10px", background:"var(--bg1)", border:"1px solid var(--border2)", borderRadius:5, color:"var(--text)", fontSize:12, fontFamily:"var(--mono)", flex:1, minWidth:200 }}>
+                      {scheduledWfs.map(wf => <option key={wf.id} value={wf.id}>{wf.name}</option>)}
+                    </select>
+
+                    {pauseStatus && (
+                      <div style={{ padding:"4px 10px", borderRadius:4, fontSize:11, background: pauseStatus.paused ? "var(--amber-dim)" : "var(--green-dim)", border:`1px solid ${pauseStatus.paused ? "var(--amber)" : "var(--green)"}44`, color: pauseStatus.paused ? "var(--amber)" : "var(--green)" }}>
+                        {pauseStatus.paused
+                          ? `⏸ Paused until ${new Date(pauseStatus.until).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}`
+                          : "▶ Active"}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Pause mode tabs */}
+                  <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+                    {[["nextday","Skip Next Day"],["range","Pause Date Range"]].map(([mode, label]) => (
+                      <button key={mode} onClick={() => setPauseMode(mode)}
+                        style={{ padding:"5px 14px", background: pauseMode===mode ? "var(--amber)" : "var(--bg3)", border:"none", borderRadius:5, color: pauseMode===mode ? "#000" : "var(--muted)", fontSize:11, fontWeight: pauseMode===mode ? 700 : 400 }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {pauseMode === "range" && (
+                    <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:12, flexWrap:"wrap" }}>
+                      <label style={{ fontSize:11, color:"var(--muted)" }}>From:</label>
+                      <input type="date" value={pauseFrom} onChange={e => setPauseFrom(e.target.value)}
+                        style={{ padding:"6px 10px", background:"var(--bg1)", border:"1px solid var(--border2)", borderRadius:5, color:"var(--text)", fontSize:12, fontFamily:"var(--mono)" }} />
+                      <label style={{ fontSize:11, color:"var(--muted)" }}>To:</label>
+                      <input type="date" value={pauseTo} onChange={e => setPauseTo(e.target.value)}
+                        style={{ padding:"6px 10px", background:"var(--bg1)", border:"1px solid var(--border2)", borderRadius:5, color:"var(--text)", fontSize:12, fontFamily:"var(--mono)" }} />
+                    </div>
+                  )}
+
+                  <div style={{ display:"flex", gap:10 }}>
+                    <button onClick={handlePause}
+                      style={{ padding:"7px 18px", background:"var(--amber)", border:"none", borderRadius:5, color:"#000", fontSize:12, fontWeight:700 }}>
+                      ⏸ {pauseMode === "nextday" ? "Skip Tomorrow" : "Pause Range"}
+                    </button>
+                    {pauseStatus?.paused && (
+                      <button onClick={handleResume}
+                        style={{ padding:"7px 18px", background:"var(--green)", border:"none", borderRadius:5, color:"#000", fontSize:12, fontWeight:700 }}>
+                        ▶ Resume Now
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(320px, 1fr))", gap:12 }}>
+                {workflows.map(wf => (
+                  <WorkflowCard key={wf.id} workflow={wf} onRun={handleRun} onDelete={handleDelete} onSaveSchedule={handleSaveSchedule} runningId={runningId} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── LOGS TAB ── */}
+          {activeTab === "logs" && (
+            <div style={{ background:"var(--bg2)", border:"1px solid var(--border)", borderRadius:8, overflow:"hidden" }}>
+              <div style={{ padding:"10px 16px", borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Execution History</span>
+                <span style={{ fontSize:10, color:"var(--muted)" }}>{logs.length} records · click a row to expand</span>
+              </div>
+              {logs.length === 0 && (
+                <div style={{ padding:"40px", textAlign:"center", color:"var(--muted)" }}>No executions yet — run a workflow to see logs here.</div>
+              )}
+              {logs.map((log, i) => <LogRow key={i} log={log} />)}
+            </div>
+          )}
+
+          {/* ── CREDENTIALS TAB ── */}
+          {activeTab === "credentials" && (
+            <div style={{ maxWidth:600 }}>
+              <div style={{ padding:"12px 16px", background:"var(--amber-dim)", border:"1px solid var(--amber)33", borderRadius:8, marginBottom:20, fontSize:11, color:"var(--amber)", lineHeight:1.6 }}>
+                ⚠ Credentials are stored in <code>storage/credentials.json</code> on your server — never sent to the browser. Values entered here are write-only.
+              </div>
+
+              {/* ── AI Providers ── */}
+              <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:12 }}>AI Providers</div>
+
+              {[
+                { key:"anthropicApiKey", label:"Anthropic (Claude)",    placeholder:"sk-ant-api03-…",           link:"https://console.anthropic.com/settings/keys",             linkLabel:"Get key →",        note:"Models: claude-sonnet-4-20250514, claude-opus-4-20250514" },
+                { key:"openaiApiKey",    label:"OpenAI (ChatGPT)",      placeholder:"sk-proj-…",                link:"https://platform.openai.com/api-keys",                    linkLabel:"Get key →",        note:"Models: gpt-4o, gpt-4o-mini, gpt-4-turbo, o1" },
+                { key:"geminiApiKey",    label:"Google Gemini",          placeholder:"AIza…",                    link:"https://aistudio.google.com/app/apikey",                  linkLabel:"Get key →",        note:"Models: gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash" },
+              ].map(field => (
+                <div key={field.key} style={{ marginBottom:16 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                    <label style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em" }}>{field.label}</label>
+                    <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                      <span style={{ fontSize:10, color: creds[field.key] ? "var(--green)" : "var(--dim)" }}>{creds[field.key] ? "✓ set" : "not set"}</span>
+                      <a href={field.link} target="_blank" rel="noreferrer" style={{ fontSize:10, color:"var(--blue)", textDecoration:"none" }}>{field.linkLabel}</a>
+                    </div>
+                  </div>
+                  <input type="password" placeholder={creds[field.key] ? "••••••• (set — paste new to update)" : field.placeholder}
+                    value={credForm[field.key]} onChange={e => setCredForm(p => ({ ...p, [field.key]: e.target.value }))}
+                    style={{ ...inputStyle, borderColor: creds[field.key] ? "var(--green)44" : "var(--border2)" }} />
+                  <div style={{ fontSize:9, color:"var(--dim)", marginTop:4 }}>{field.note}</div>
+                </div>
+              ))}
+
+              {/* Ollama */}
+              <div style={{ marginBottom:16 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                  <label style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Ollama (Local / Open-Source)</label>
+                  <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                    <span style={{ fontSize:10, color: creds.ollamaUrl ? "var(--green)" : "var(--dim)" }}>{creds.ollamaUrl ? "✓ set" : "not set"}</span>
+                    <a href="https://ollama.com" target="_blank" rel="noreferrer" style={{ fontSize:10, color:"var(--blue)", textDecoration:"none" }}>Install Ollama →</a>
+                  </div>
+                </div>
+                <input type="text" placeholder="http://localhost:11434"
+                  value={credForm.ollamaUrl} onChange={e => setCredForm(p => ({ ...p, ollamaUrl: e.target.value }))}
+                  style={{ ...inputStyle, borderColor: creds.ollamaUrl ? "var(--green)44" : "var(--border2)" }} />
+                <div style={{ fontSize:9, color:"var(--dim)", marginTop:4 }}>Models: llama3, mistral, phi3, gemma3, codellama, deepseek-r1 — run: <code style={{color:"var(--amber)"}}>ollama pull llama3</code></div>
+              </div>
+
+              {/* OpenAI-compatible custom endpoint */}
+              <div style={{ marginBottom:16 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                  <label style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Custom / OpenAI-Compatible Endpoint</label>
+                  <span style={{ fontSize:10, color: creds.customBaseUrl ? "var(--green)" : "var(--dim)" }}>{creds.customBaseUrl ? "✓ set" : "not set"}</span>
+                </div>
+                <input type="text" placeholder="https://api.groq.com/openai  or  https://openrouter.ai/api"
+                  value={credForm.customBaseUrl} onChange={e => setCredForm(p => ({ ...p, customBaseUrl: e.target.value }))}
+                  style={{ ...inputStyle, marginBottom:6, borderColor: creds.customBaseUrl ? "var(--green)44" : "var(--border2)" }} />
+                <input type="password" placeholder="API key (if required)"
+                  value={credForm.customApiKey} onChange={e => setCredForm(p => ({ ...p, customApiKey: e.target.value }))}
+                  style={{ ...inputStyle, borderColor: creds.customApiKey ? "var(--green)44" : "var(--border2)" }} />
+                <div style={{ fontSize:9, color:"var(--dim)", marginTop:4 }}>Works with: Groq, OpenRouter, Together AI, LM Studio, any OpenAI-spec API</div>
+              </div>
+
+              {/* ── Integrations ── */}
+              <div style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em", margin:"20px 0 12px" }}>Integrations</div>
+
+              {/* Resend (recommended email API) */}
+              <div style={{ marginBottom:16 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                  <label style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em" }}>Resend — Email API (Recommended)</label>
+                  <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                    <span style={{ fontSize:10, color: creds.resendApiKey ? "var(--green)" : "var(--dim)" }}>{creds.resendApiKey ? "✓ set" : "not set"}</span>
+                    <a href="https://resend.com/signup" target="_blank" rel="noreferrer" style={{ fontSize:10, color:"var(--blue)", textDecoration:"none" }}>Free signup →</a>
+                  </div>
+                </div>
+                <input type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  value={credForm.resendApiKey || ""} onChange={e => setCredForm(p => ({ ...p, resendApiKey: e.target.value }))}
+                  style={{ ...inputStyle, borderColor: creds.resendApiKey ? "var(--green)44" : "var(--border2)" }} />
+                <div style={{ fontSize:9, color:"var(--dim)", marginTop:4 }}>
+                  No password needed. Free tier: 3000 emails/month. Sign up → API Keys → Create. Emails arrive from onboarding@resend.dev until you verify your own domain.
+                </div>
+              </div>
+
+              {[
+                { key:"slackToken", label:"Slack Bot Token", placeholder:"xoxb-…", link:"https://api.slack.com/apps", linkLabel:"Create app →" },
+              ].map(field => (
+                <div key={field.key} style={{ marginBottom:16 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
+                    <label style={{ fontSize:10, color:"var(--muted)", textTransform:"uppercase", letterSpacing:"0.1em" }}>{field.label}</label>
+                    <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                      <span style={{ fontSize:10, color: creds[field.key] ? "var(--green)" : "var(--dim)" }}>{creds[field.key] ? "✓ set" : "not set"}</span>
+                      <a href={field.link} target="_blank" rel="noreferrer" style={{ fontSize:10, color:"var(--blue)", textDecoration:"none" }}>{field.linkLabel}</a>
+                    </div>
+                  </div>
+                  <input type="password" placeholder={creds[field.key] ? "••••••• (set — paste new to update)" : field.placeholder}
+                    value={credForm[field.key]} onChange={e => setCredForm(p => ({ ...p, [field.key]: e.target.value }))}
+                    style={{ ...inputStyle, borderColor: creds[field.key] ? "var(--green)44" : "var(--border2)" }} />
+                </div>
+              ))}
+
+              <button onClick={handleSaveCreds} disabled={credSaving || Object.values(credForm).every(v => !v)}
+                style={{ width:"100%", padding:"10px", background: credSaving || Object.values(credForm).every(v => !v) ? "var(--bg3)" : "var(--amber)", border:"none", color: credSaving || Object.values(credForm).every(v => !v) ? "var(--muted)" : "#000", borderRadius:6, fontSize:12, fontWeight:700, transition:"all 0.2s" }}>
+                {credSaving ? "⟳ Saving…" : "Save Credentials to Server"}
+              </button>
+
+              <div style={{ marginTop:20, padding:"14px 16px", background:"var(--bg2)", border:"1px solid var(--border)", borderRadius:8 }}>
+                <div style={{ fontSize:10, color:"var(--muted)", marginBottom:10, textTransform:"uppercase", letterSpacing:"0.1em" }}>Or save via curl</div>
+                <pre style={{ fontSize:10, color:"var(--text)", lineHeight:1.8, overflowX:"auto" }}>{`curl -X POST http://localhost:3001/api/credentials \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "anthropicApiKey": "sk-ant-...",
+    "openaiApiKey":    "sk-proj-...",
+    "geminiApiKey":    "AIza...",
+    "ollamaUrl":       "http://localhost:11434",
+    "customBaseUrl":   "https://api.groq.com/openai",
+    "customApiKey":    "gsk_...",
+    "slackToken":      "xoxb-...",
+    "gmailToken":      "ya29...."
+  }'`}</pre>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+
+      {/* ── FOOTER ── */}
+      <div style={{ padding:"8px 24px", borderTop:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0, background:"var(--bg1)" }}>
+        <div style={{ fontSize:10, color:"var(--dim)" }}>
+          Workflow Engine Dashboard · connects to localhost:3001
+        </div>
+        <div style={{ fontSize:10, color:"var(--dim)", display:"flex", gap:16 }}>
+          <a href="http://localhost:3001/api/health"    target="_blank" rel="noreferrer" style={{ color:"var(--dim)", textDecoration:"none" }}>health</a>
+          <a href="http://localhost:3001/api/workflows" target="_blank" rel="noreferrer" style={{ color:"var(--dim)", textDecoration:"none" }}>api</a>
+          <a href="http://localhost:3001/api/logs"      target="_blank" rel="noreferrer" style={{ color:"var(--dim)", textDecoration:"none" }}>logs</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Dashboard />);
+</script>
+</body>
+</html>

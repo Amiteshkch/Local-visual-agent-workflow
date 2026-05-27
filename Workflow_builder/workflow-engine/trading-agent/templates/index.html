@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading Agent</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { background: #0b0f1a; }
+
+    .spinner {
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.15);
+      border-top-color: #22c55e;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .fade-in { animation: fadeIn .35s ease-out; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .pulse {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .35; }
+    }
+
+    .pulse-strong { animation: pulseStrong 1.2s ease-in-out infinite; }
+    @keyframes pulseStrong {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.6); }
+      50%      { box-shadow: 0 0 0 6px rgba(251, 191, 36, 0); }
+    }
+
+    .step-line::after {
+      content: '';
+      display: block;
+      width: 2px; height: 28px;
+      background: #1e293b;
+      margin: 6px auto 0;
+    }
+
+    .tf-btn { padding: 4px 10px; border-radius: 6px; font-size: 11px; color: #94a3b8; }
+    .tf-btn:hover { background: #1e293b; color: #fff; }
+    .tf-btn.active { background: #1d4ed8; color: #fff; }
+
+    .wl-row { cursor: pointer; }
+    .wl-row:hover { background: #1e293b; }
+    .wl-row.active { background: #1e3a8a40; border-left: 2px solid #3b82f6; padding-left: calc(0.5rem - 2px); }
+
+    pre { white-space: pre-wrap; word-break: break-all; }
+
+    .ohlc-pill { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body class="text-slate-100 min-h-screen font-mono antialiased">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="border-b border-slate-800 px-6 py-3 flex items-center justify-between sticky top-0 z-20"
+          style="background:#0b0f1a;">
+    <div class="flex items-center gap-3">
+      <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+      </svg>
+      <span class="text-white font-bold tracking-tight">Trading Agent</span>
+      <span class="text-slate-600 text-sm">/ Dashboard</span>
+    </div>
+    <div class="flex items-center gap-5 text-sm">
+      <div class="flex items-center gap-2">
+        <span class="pulse bg-slate-500" id="status-dot"></span>
+        <span id="status-text" class="text-slate-400">—</span>
+      </div>
+      <span id="clock" class="text-slate-600 text-xs tabular-nums"></span>
+    </div>
+  </header>
+
+  <main class="max-w-[1400px] mx-auto px-4 py-6 space-y-6">
+
+    <!-- ── Chart Panel ─────────────────────────────────────── -->
+    <section class="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
+      <!-- Symbol header row -->
+      <div class="flex items-center justify-between flex-wrap gap-3 px-4 py-3 border-b border-slate-800">
+        <div class="flex items-center gap-4">
+          <span id="chart-symbol" class="text-white font-bold text-xl">—</span>
+          <span class="text-slate-600 text-xs uppercase tracking-wider">Alpaca · IEX</span>
+        </div>
+
+        <!-- OHLC + Vol crosshair readout (TradingView style) -->
+        <div id="ohlc-readout" class="flex items-center gap-3 text-xs ohlc-pill text-slate-500">
+          <span>O <span id="ohlc-o" class="text-slate-300">—</span></span>
+          <span>H <span id="ohlc-h" class="text-slate-300">—</span></span>
+          <span>L <span id="ohlc-l" class="text-slate-300">—</span></span>
+          <span>C <span id="ohlc-c" class="text-slate-300">—</span></span>
+          <span>V <span id="ohlc-v" class="text-slate-300">—</span></span>
+          <span id="ohlc-chg" class="font-semibold">—</span>
+        </div>
+
+        <!-- Timeframe selector -->
+        <div class="flex items-center gap-1">
+          <button class="tf-btn" data-tf="1Min">1m</button>
+          <button class="tf-btn" data-tf="5Min">5m</button>
+          <button class="tf-btn active" data-tf="15Min">15m</button>
+          <button class="tf-btn" data-tf="1Hour">1h</button>
+          <button class="tf-btn" data-tf="1Day">1D</button>
+          <button class="tf-btn" data-tf="1Week">1W</button>
+        </div>
+      </div>
+
+      <!-- Chart canvases -->
+      <div id="chart-container" style="height: 420px; width: 100%;"></div>
+      <div id="rsi-container"   style="height: 110px; width: 100%; border-top: 1px solid #1e293b;"></div>
+
+      <!-- Legend strip -->
+      <div class="flex items-center gap-4 text-xs px-4 py-2 border-t border-slate-800 text-slate-500">
+        <span><span class="inline-block w-3 h-0.5 bg-orange-400 align-middle mr-1"></span>EMA 20</span>
+        <span><span class="inline-block w-3 h-2 bg-blue-500/60 align-middle mr-1"></span>Volume</span>
+        <span><span class="inline-block w-3 h-0.5 bg-purple-400 align-middle mr-1"></span>RSI 14</span>
+        <span id="markers-legend" class="hidden"><span class="text-green-400">▲</span> BUY · <span class="text-red-400">▼</span> SELL · <span class="text-slate-500">●</span> NO_TRADE</span>
+      </div>
+    </section>
+
+    <!-- ── Two-column body ─────────────────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+
+      <!-- LEFT column: Claude flow -->
+      <div class="space-y-6">
+
+        <!-- Account strip -->
+        <div id="account-strip" class="hidden fade-in grid grid-cols-2 gap-4">
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-widest mb-1">Portfolio Value</p>
+            <p class="text-2xl font-bold text-white tabular-nums" id="portfolio-value">—</p>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-widest mb-1">Buying Power</p>
+            <p class="text-2xl font-bold text-green-400 tabular-nums" id="buying-power">—</p>
+          </div>
+        </div>
+
+        <!-- ── Quick BUY/SELL ticket ────────────────────────── -->
+        <section class="rounded-xl border border-slate-800 bg-slate-900 p-4 fade-in">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Quick Order</h2>
+            <span class="text-xs text-slate-600">Symbol: <span id="qo-symbol" class="text-slate-300 font-bold">—</span></span>
+          </div>
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <div class="rounded-lg border border-red-800/70 bg-red-950/40 p-3 text-center">
+              <p class="text-[10px] text-red-300/80 uppercase tracking-widest mb-1">Sell @ Bid</p>
+              <p class="text-2xl font-bold text-red-300 tabular-nums">$<span id="qo-bid">—</span></p>
+              <p class="text-[10px] text-red-400/70"><span id="qo-bid-size">—</span> shares</p>
+            </div>
+            <div class="rounded-lg border border-green-800/70 bg-green-950/40 p-3 text-center">
+              <p class="text-[10px] text-green-300/80 uppercase tracking-widest mb-1">Buy @ Ask</p>
+              <p class="text-2xl font-bold text-green-300 tabular-nums">$<span id="qo-ask">—</span></p>
+              <p class="text-[10px] text-green-400/70"><span id="qo-ask-size">—</span> shares</p>
+            </div>
+          </div>
+          <div class="flex items-stretch gap-2">
+            <input id="qo-qty" type="number" min="1" step="1" value="1"
+                   class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm w-24 tabular-nums focus:outline-none focus:border-blue-500" />
+            <button onclick="manualOrder('sell')" id="qo-sell"
+                    class="flex-1 bg-red-700 hover:bg-red-600 text-white rounded-lg font-semibold text-sm transition-colors disabled:opacity-50">
+              SELL
+            </button>
+            <button onclick="manualOrder('buy')" id="qo-buy"
+                    class="flex-1 bg-green-700 hover:bg-green-600 text-white rounded-lg font-semibold text-sm transition-colors disabled:opacity-50">
+              BUY
+            </button>
+          </div>
+          <p id="qo-result" class="hidden mt-3 text-xs"></p>
+        </section>
+
+        <!-- Step 1 · Research -->
+        <section>
+          <div class="flex items-center gap-3 mb-4 step-line">
+            <span class="w-7 h-7 rounded-full bg-blue-900/60 border border-blue-700 text-blue-300
+                         flex items-center justify-center text-xs font-bold shrink-0">1</span>
+            <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Market Research</h2>
+          </div>
+          <button id="btn-research" onclick="runResearch()"
+            class="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-700 hover:bg-blue-600
+                   text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+            <span id="research-label">Fetch Market Data</span>
+            <span id="research-spin" class="hidden"><span class="spinner"></span></span>
+          </button>
+        </section>
+
+        <!-- Step 2 · Decision -->
+        <section id="step2" class="hidden">
+          <div class="flex items-center gap-3 mb-4 step-line">
+            <span class="w-7 h-7 rounded-full bg-purple-900/60 border border-purple-700 text-purple-300
+                         flex items-center justify-center text-xs font-bold shrink-0">2</span>
+            <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Claude's Decision</h2>
+          </div>
+          <button id="btn-decide" onclick="runDecision()"
+            class="inline-flex items-center gap-2 px-5 py-2.5 bg-purple-700 hover:bg-purple-600
+                   text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+            <span id="decide-label">Get Claude's Decision</span>
+            <span id="decide-spin" class="hidden"><span class="spinner"></span></span>
+          </button>
+          <div id="decision-card" class="hidden mt-4"></div>
+        </section>
+
+        <!-- Step 3 · Your Call -->
+        <section id="step3" class="hidden">
+          <div class="flex items-center gap-3 mb-4">
+            <span class="w-7 h-7 rounded-full bg-slate-800 border border-slate-600 text-slate-300
+                         flex items-center justify-center text-xs font-bold shrink-0">3</span>
+            <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Your Decision</h2>
+          </div>
+          <div id="trade-buttons" class="flex flex-wrap gap-3"></div>
+          <div id="trade-result" class="hidden mt-4"></div>
+        </section>
+
+      </div>
+
+      <!-- RIGHT column: watchlist + alerts -->
+      <aside class="space-y-6">
+
+        <!-- ── Watchlist (TV-style) ────────────────────────── -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 p-3">
+          <div class="flex items-center justify-between mb-2 px-2">
+            <span class="text-xs uppercase tracking-widest text-slate-500">Watchlist</span>
+            <button onclick="refreshWatchlist()" class="text-xs text-slate-500 hover:text-slate-200">↺</button>
+          </div>
+          <div class="grid grid-cols-[1fr_auto_auto] gap-x-3 text-[10px] uppercase tracking-widest text-slate-600 px-2 pb-1 border-b border-slate-800">
+            <div>Symbol</div>
+            <div class="text-right">Last</div>
+            <div class="text-right">Chg%</div>
+          </div>
+          <div id="watchlist-rows" class="text-sm"></div>
+        </div>
+
+        <!-- ── Alerts ──────────────────────────────────────── -->
+        <div class="rounded-xl border border-slate-800 bg-slate-900 p-3">
+          <div class="flex items-center justify-between mb-2 px-1">
+            <span class="text-xs uppercase tracking-widest text-slate-500">Price Alerts</span>
+            <span id="alerts-status" class="text-xs text-slate-600">—</span>
+          </div>
+          <div class="flex items-center gap-1 mb-3">
+            <span id="al-symbol-pill" class="bg-slate-800 text-slate-300 text-xs px-2 py-1.5 rounded">—</span>
+            <select id="al-cond" class="bg-slate-800 border border-slate-700 rounded text-xs text-slate-200 px-2 py-1.5 focus:outline-none">
+              <option value="above">≥</option>
+              <option value="below">≤</option>
+            </select>
+            <input id="al-price" type="number" step="0.01" placeholder="price"
+                   class="bg-slate-800 border border-slate-700 rounded text-xs text-slate-100 px-2 py-1.5 w-full focus:outline-none focus:border-blue-500" />
+            <button onclick="addAlert()" class="bg-blue-700 hover:bg-blue-600 text-white rounded text-xs px-3 py-1.5 font-semibold">+</button>
+          </div>
+          <div id="alerts-list" class="space-y-1 text-xs"></div>
+        </div>
+
+      </aside>
+    </div>
+
+    <!-- ── Journal ─────────────────────────────────────────── -->
+    <section>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Trade Journal</h2>
+        <button onclick="loadJournal()"
+          class="text-xs text-slate-500 hover:text-slate-300 transition-colors">↺ Refresh</button>
+      </div>
+      <div id="journal-feed" class="space-y-2">
+        <p class="text-slate-600 text-sm">Loading…</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ────────────────────────────────────────────────────── -->
+  <script>
+  'use strict';
+
+  // ── Globals ────────────────────────────────────────────────
+  let marketData = null;
+  let currentDecision = null;
+  let activeSymbol = null;
+  let activeTimeframe = '15Min';
+  let lastCandle = null;
+  let chart, candleSeries, emaSeries, volumeSeries, rsiChart, rsiSeries;
+  let watchlistState = []; // [{symbol, price, change_pct_1d, ...}]
+
+  // ── Boot ───────────────────────────────────────────────────
+  initCharts();
+  loadDefaultWatchlist();
+  loadJournal();
+  checkStatus();
+  setInterval(checkStatus, 30_000);
+  setInterval(pollAlerts, 30_000);
+  setInterval(refreshQuote, 10_000);
+  loadAlerts();
+
+  // ── Lightweight-Charts init ────────────────────────────────
+  function initCharts() {
+    const baseOpts = {
+      layout: { background: { color: '#0b0f1a' }, textColor: '#94a3b8', fontFamily: 'ui-monospace, monospace' },
+      grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+      rightPriceScale: { borderColor: '#334155' },
+      timeScale: { borderColor: '#334155', timeVisible: true, secondsVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    };
+
+    chart = LightweightCharts.createChart(document.getElementById('chart-container'), baseOpts);
+
+    candleSeries = chart.addCandlestickSeries({
+      upColor: '#22c55e', downColor: '#ef4444',
+      borderUpColor: '#22c55e', borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+    });
+
+    emaSeries = chart.addLineSeries({
+      color: '#fb923c', lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+    });
+
+    volumeSeries = chart.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume',
+      color: '#3b82f6',
+    });
+    chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+
+    rsiChart = LightweightCharts.createChart(document.getElementById('rsi-container'), {
+      ...baseOpts,
+      rightPriceScale: { ...baseOpts.rightPriceScale, scaleMargins: { top: 0.05, bottom: 0.05 } },
+      timeScale: { ...baseOpts.timeScale, visible: false },
+    });
+    rsiSeries = rsiChart.addLineSeries({ color: '#a855f7', lineWidth: 1.5, priceLineVisible: false });
+    rsiSeries.createPriceLine({ price: 70, color: '#ef4444', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '70' });
+    rsiSeries.createPriceLine({ price: 30, color: '#22c55e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: '30' });
+
+    // Sync the two time scales both ways.
+    let syncing = false;
+    chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
+      if (syncing || !r) return;
+      syncing = true; rsiChart.timeScale().setVisibleLogicalRange(r); syncing = false;
+    });
+    rsiChart.timeScale().subscribeVisibleLogicalRangeChange(r => {
+      if (syncing || !r) return;
+      syncing = true; chart.timeScale().setVisibleLogicalRange(r); syncing = false;
+    });
+
+    // OHLC crosshair readout.
+    chart.subscribeCrosshairMove(param => {
+      const data = param.seriesData?.get(candleSeries);
+      if (data) updateOHLC(data);
+      else if (lastCandle) updateOHLC(lastCandle);
+    });
+
+    // Timeframe buttons.
+    document.querySelectorAll('.tf-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeTimeframe = btn.dataset.tf;
+        if (activeSymbol) loadChart(activeSymbol, activeTimeframe);
+      });
+    });
+
+    // Resize handling.
+    window.addEventListener('resize', () => {
+      const w = document.getElementById('chart-container').clientWidth;
+      chart.applyOptions({ width: w });
+      rsiChart.applyOptions({ width: w });
+    });
+  }
+
+  function updateOHLC(c) {
+    const fmtP = v => (v == null ? '—' : Number(v).toFixed(2));
+    document.getElementById('ohlc-o').textContent = fmtP(c.open);
+    document.getElementById('ohlc-h').textContent = fmtP(c.high);
+    document.getElementById('ohlc-l').textContent = fmtP(c.low);
+    document.getElementById('ohlc-c').textContent = fmtP(c.close);
+    document.getElementById('ohlc-v').textContent = c.volume != null ? fmtV(c.volume) : '—';
+
+    const chg = c.close - c.open;
+    const chgPct = c.open ? (chg / c.open * 100) : 0;
+    const el = document.getElementById('ohlc-chg');
+    const sign = chg >= 0 ? '+' : '';
+    el.textContent = `${sign}${chg.toFixed(2)} (${sign}${chgPct.toFixed(2)}%)`;
+    el.className = 'font-semibold ' + (chg >= 0 ? 'text-green-400' : 'text-red-400');
+  }
+
+  function fmtV(v) {
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K';
+    return String(v);
+  }
+
+  // ── Chart data loader ──────────────────────────────────────
+  async function loadChart(symbol, timeframe) {
+    activeSymbol = symbol;
+    activeTimeframe = timeframe;
+    document.getElementById('chart-symbol').textContent = symbol;
+    document.getElementById('qo-symbol').textContent = symbol;
+    document.getElementById('al-symbol-pill').textContent = symbol;
+    highlightWatchlistRow(symbol);
+
+    try {
+      const data = await api(`/api/bars/${symbol}?timeframe=${timeframe}&limit=300`);
+      if (!data.ok) throw new Error(data.error);
+      const candles = data.candles;
+      candleSeries.setData(candles);
+      lastCandle = candles[candles.length - 1] || null;
+      if (lastCandle) updateOHLC(lastCandle);
+
+      emaSeries.setData(data.ema20 || []);
+      volumeSeries.setData((candles || []).map(c => ({
+        time: c.time,
+        value: c.volume,
+        color: c.close >= c.open ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.45)',
+      })));
+      rsiSeries.setData(data.rsi14 || []);
+      chart.timeScale().fitContent();
+
+      loadMarkers(symbol);
+    } catch (e) {
+      flashError('Chart load failed: ' + e.message);
+    }
+    refreshQuote();
+  }
+
+  async function loadMarkers(symbol) {
+    try {
+      const { markers } = await api(`/api/journal/markers/${symbol}`);
+      if (!markers || !markers.length) {
+        candleSeries.setMarkers([]);
+        document.getElementById('markers-legend').classList.add('hidden');
+        return;
+      }
+      const out = markers.map(m => {
+        if (m.side === 'BUY') return { time: m.time, position: 'belowBar', color: '#22c55e', shape: 'arrowUp', text: `BUY${m.qty ? ' ' + m.qty : ''}${m.executed ? '' : '·skip'}` };
+        if (m.side === 'SELL') return { time: m.time, position: 'aboveBar', color: '#ef4444', shape: 'arrowDown', text: `SELL${m.qty ? ' ' + m.qty : ''}${m.executed ? '' : '·skip'}` };
+        return { time: m.time, position: 'inBar', color: '#64748b', shape: 'circle', text: 'NO_TRADE' };
+      });
+      candleSeries.setMarkers(out);
+      document.getElementById('markers-legend').classList.remove('hidden');
+    } catch (_) {}
+  }
+
+  // ── Watchlist ──────────────────────────────────────────────
+  async function loadDefaultWatchlist() {
+    try {
+      const { symbols } = await api('/api/watchlist');
+      // Render skeleton rows so user can click before research completes.
+      watchlistState = symbols.map(s => ({ symbol: s, price: null, change_pct_1d: null }));
+      renderWatchlist();
+      // Pick the first one as the initial chart symbol.
+      if (symbols.length) loadChart(symbols[0], activeTimeframe);
+    } catch (e) {
+      flashError('Default watchlist load failed: ' + e.message);
+    }
+  }
+
+  function renderWatchlist() {
+    const el = document.getElementById('watchlist-rows');
+    el.innerHTML = watchlistState.map(t => {
+      const chg = t.change_pct_1d;
+      const chgColor = chg == null ? 'text-slate-500' : (chg >= 0 ? 'text-green-400' : 'text-red-400');
+      const chgTxt = chg == null ? '—' : `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`;
+      const px = t.price == null ? '—' : `$${Number(t.price).toFixed(2)}`;
+      const active = t.symbol === activeSymbol ? 'active' : '';
+      return `<div class="wl-row ${active} grid grid-cols-[1fr_auto_auto] items-center gap-x-3 px-2 py-1.5 rounded"
+                   onclick="loadChart('${t.symbol}', activeTimeframe)">
+        <span class="text-white font-bold">${t.symbol}</span>
+        <span class="text-slate-200 tabular-nums text-right">${px}</span>
+        <span class="${chgColor} tabular-nums text-right text-xs">${chgTxt}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function highlightWatchlistRow(symbol) {
+    activeSymbol = symbol;
+    renderWatchlist();
+  }
+
+  function refreshWatchlist() {
+    if (marketData) renderAccountAndWatchlist(marketData);
+    else loadDefaultWatchlist();
+  }
+
+  // ── Live quote (Quick BUY/SELL ticket) ─────────────────────
+  async function refreshQuote() {
+    if (!activeSymbol) return;
+    try {
+      const q = await api(`/api/quote/${activeSymbol}`);
+      if (!q.ok) return;
+      const fmt2 = v => v == null ? '—' : Number(v).toFixed(2);
+      document.getElementById('qo-bid').textContent = fmt2(q.bid);
+      document.getElementById('qo-ask').textContent = fmt2(q.ask);
+      document.getElementById('qo-bid-size').textContent = q.bid_size ?? '—';
+      document.getElementById('qo-ask-size').textContent = q.ask_size ?? '—';
+    } catch (_) {}
+  }
+
+  // ── Manual order ───────────────────────────────────────────
+  async function manualOrder(side) {
+    if (!activeSymbol) return;
+    const qty = parseInt(document.getElementById('qo-qty').value, 10) || 0;
+    if (qty <= 0) { flashError('Enter qty > 0'); return; }
+
+    const result = document.getElementById('qo-result');
+    document.getElementById('qo-buy').disabled = true;
+    document.getElementById('qo-sell').disabled = true;
+    result.classList.remove('hidden');
+    result.className = 'mt-3 text-xs text-slate-400';
+    result.textContent = `Placing ${side.toUpperCase()} × ${qty} ${activeSymbol}…`;
+
+    try {
+      const res = await fetch('/api/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: activeSymbol, qty, side }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      result.className = 'mt-3 text-xs text-green-400';
+      result.textContent = `✓ ${side.toUpperCase()} × ${qty} ${activeSymbol} submitted · order ${data.order?.id || ''}`;
+      setTimeout(loadJournal, 600);
+      setTimeout(() => loadMarkers(activeSymbol), 800);
+    } catch (e) {
+      result.className = 'mt-3 text-xs text-red-400';
+      result.textContent = `✗ ${e.message}`;
+    } finally {
+      document.getElementById('qo-buy').disabled = false;
+      document.getElementById('qo-sell').disabled = false;
+    }
+  }
+
+  // ── Alerts ─────────────────────────────────────────────────
+  async function loadAlerts() {
+    try {
+      const { alerts } = await api('/api/alerts');
+      renderAlerts(alerts);
+    } catch (_) {}
+  }
+
+  function renderAlerts(items) {
+    const el = document.getElementById('alerts-list');
+    if (!items || !items.length) {
+      el.innerHTML = '<p class="text-slate-600 text-xs px-1">No alerts set.</p>';
+      return;
+    }
+    el.innerHTML = items.map(a => {
+      const symbol = a.symbol;
+      const cond = a.condition === 'above' ? '≥' : '≤';
+      const triggered = !!a.triggered_at;
+      const cls = triggered
+        ? 'bg-amber-950/40 border-amber-700 text-amber-300 pulse-strong'
+        : 'bg-slate-800/60 border-slate-700 text-slate-300';
+      const tail = triggered
+        ? `<span class="text-amber-400 text-[10px]">FIRED @ $${a.triggered_price?.toFixed(2)}</span>`
+        : `<button onclick="deleteAlert('${a.id}')" class="text-slate-600 hover:text-red-400 text-xs ml-1">✕</button>`;
+      return `<div class="flex items-center justify-between gap-2 border rounded-md ${cls} px-2 py-1.5">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="font-bold text-white text-xs">${symbol}</span>
+          <span class="text-xs">${cond} $${a.price.toFixed(2)}</span>
+        </div>
+        ${tail}
+      </div>`;
+    }).join('');
+  }
+
+  async function addAlert() {
+    if (!activeSymbol) { flashError('Pick a symbol first'); return; }
+    const cond = document.getElementById('al-cond').value;
+    const price = parseFloat(document.getElementById('al-price').value);
+    if (!isFinite(price) || price <= 0) { flashError('Enter a valid price'); return; }
+    try {
+      const res = await fetch('/api/alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: activeSymbol, condition: cond, price }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      document.getElementById('al-price').value = '';
+      loadAlerts();
+    } catch (e) {
+      flashError('Add alert failed: ' + e.message);
+    }
+  }
+
+  async function deleteAlert(id) {
+    try {
+      await fetch(`/api/alerts/${id}`, { method: 'DELETE' });
+      loadAlerts();
+    } catch (_) {}
+  }
+
+  async function pollAlerts() {
+    try {
+      const res = await fetch('/api/alerts/check', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok && data.fired && data.fired.length) {
+        data.fired.forEach(a => {
+          flashAlert(`🔔 ${a.symbol} ${a.condition === 'above' ? '≥' : '≤'} $${a.price.toFixed(2)} — now $${a.triggered_price?.toFixed(2)}`);
+        });
+        loadAlerts();
+      }
+      document.getElementById('alerts-status').textContent =
+        new Date().toLocaleTimeString('en-US', { hour12: false });
+    } catch (_) {}
+  }
+
+  function flashAlert(msg) {
+    const div = document.createElement('div');
+    div.className = 'fixed top-4 right-4 z-50 bg-amber-900/90 border border-amber-500 text-amber-100 text-sm px-4 py-3 rounded-xl fade-in pulse-strong';
+    div.textContent = msg;
+    document.body.appendChild(div);
+    setTimeout(() => div.remove(), 8000);
+  }
+
+  // ── Market status ──────────────────────────────────────────
+  async function checkStatus() {
+    try {
+      const { market_open, server_time } = await api('/api/status');
+      const dot  = document.getElementById('status-dot');
+      const text = document.getElementById('status-text');
+      if (market_open) {
+        dot.className  = 'pulse bg-green-400';
+        text.textContent = 'Market Open';
+        text.className = 'text-green-400 text-sm';
+      } else {
+        dot.className  = 'pulse bg-red-500';
+        text.textContent = 'Market Closed';
+        text.className = 'text-red-400 text-sm';
+      }
+      const t = new Date(server_time);
+      document.getElementById('clock').textContent =
+        t.toLocaleTimeString('en-US', { hour12: false, timeZoneName: 'short' });
+    } catch (_) {
+      document.getElementById('status-text').textContent = 'Offline';
+    }
+  }
+
+  // ── Step 1: Research ───────────────────────────────────────
+  async function runResearch() {
+    setBtn('btn-research', 'research-label', 'research-spin', 'Fetching…', true);
+    hide('step2'); hide('step3');
+    document.getElementById('decision-card').innerHTML = '';
+    document.getElementById('trade-result').innerHTML = '';
+    marketData = null; currentDecision = null;
+
+    try {
+      const { ok, data, error } = await api('/api/research', 'POST');
+      if (!ok) throw new Error(error);
+      marketData = data;
+      renderAccountAndWatchlist(data);
+      show('step2');
+    } catch (e) {
+      flashError('Research failed: ' + e.message);
+    } finally {
+      setBtn('btn-research', 'research-label', 'research-spin', 'Fetch Market Data', false);
+    }
+  }
+
+  function renderAccountAndWatchlist(data) {
+    const strip = document.getElementById('account-strip');
+    strip.classList.remove('hidden');
+    document.getElementById('portfolio-value').textContent = '$' + fmt(data.account.portfolio_value);
+    document.getElementById('buying-power').textContent   = '$' + fmt(data.account.buying_power);
+    watchlistState = data.watchlist || [];
+    renderWatchlist();
+  }
+
+  // ── Step 2: Decision ───────────────────────────────────────
+  async function runDecision() {
+    setBtn('btn-decide', 'decide-label', 'decide-spin', 'Consulting Claude…', true);
+    hide('step3');
+    document.getElementById('decision-card').innerHTML = '';
+    currentDecision = null;
+
+    try {
+      const { ok, decision, error } = await api('/api/decide', 'POST');
+      if (!ok) throw new Error(error);
+      currentDecision = decision;
+      renderDecision(decision);
+      renderTradeButtons(decision);
+      show('step3');
+      if (decision.symbol) loadChart(decision.symbol, activeTimeframe);
+    } catch (e) {
+      flashError('Decision failed: ' + e.message);
+    } finally {
+      setBtn('btn-decide', 'decide-label', 'decide-spin', "Get Claude's Decision", false);
+    }
+  }
+
+  function renderDecision(dec) {
+    const card = document.getElementById('decision-card');
+    const theme = {
+      BUY:      { ring: 'border-green-600', bg: 'bg-green-950/40', badge: 'bg-green-600',  text: 'text-green-400' },
+      SELL:     { ring: 'border-red-600',   bg: 'bg-red-950/40',   badge: 'bg-red-600',    text: 'text-red-400'   },
+      NO_TRADE: { ring: 'border-slate-700', bg: 'bg-slate-900',    badge: 'bg-slate-600',  text: 'text-slate-400' },
+    }[dec.decision] || { ring: 'border-slate-700', bg: 'bg-slate-900', badge: 'bg-slate-600', text: 'text-slate-400' };
+
+    const confColor = { HIGH: 'text-green-400', MEDIUM: 'text-yellow-400', LOW: 'text-red-400' }[dec.confidence] || 'text-slate-500';
+    const willAct   = dec.decision !== 'NO_TRADE' && dec.confidence !== 'LOW';
+
+    let priceRow = '';
+    if (willAct && marketData) {
+      const ticker = marketData.watchlist.find(t => t.symbol === dec.symbol);
+      if (ticker && dec.qty) {
+        const est = (ticker.price * dec.qty).toFixed(2);
+        const maxQ = Math.floor((marketData.account.portfolio_value * 0.02) / ticker.price);
+        priceRow = `
+        <div class="mt-4 grid grid-cols-3 gap-3 text-xs">
+          <div class="rounded-lg bg-slate-800 p-3">
+            <p class="text-slate-500 mb-1">Current Price</p>
+            <p class="text-white font-bold tabular-nums">$${ticker.price.toFixed(2)}</p>
+          </div>
+          <div class="rounded-lg bg-slate-800 p-3">
+            <p class="text-slate-500 mb-1">Estimated Cost</p>
+            <p class="text-white font-bold tabular-nums">$${fmt(parseFloat(est))}</p>
+          </div>
+          <div class="rounded-lg bg-slate-800 p-3">
+            <p class="text-slate-500 mb-1">Max Safe Qty</p>
+            <p class="text-white font-bold tabular-nums">${maxQ} shares</p>
+          </div>
+        </div>`;
+      }
+    }
+
+    card.innerHTML = `
+    <div class="${theme.bg} ${theme.ring} border rounded-xl p-6 fade-in">
+      <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div class="flex items-center gap-3 flex-wrap">
+          <span class="${theme.badge} text-white font-bold text-base px-4 py-1 rounded-lg tracking-wide">
+            ${dec.decision}
+          </span>
+          ${dec.symbol ? `<span class="text-white font-bold text-lg">${dec.symbol}</span>` : ''}
+          ${dec.qty    ? `<span class="text-slate-400 text-sm">× ${dec.qty} shares</span>` : ''}
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="${confColor} text-xs font-semibold uppercase tracking-widest">${dec.confidence}</span>
+          <span class="text-slate-600 text-xs">confidence</span>
+        </div>
+      </div>
+      <p class="text-slate-300 text-sm leading-relaxed">${dec.reasoning}</p>
+      ${priceRow}
+      ${!willAct ? `<p class="mt-3 text-xs text-slate-600 italic">
+        Agent would not act on this signal. You can still log it.
+      </p>` : ''}
+    </div>`;
+    card.classList.remove('hidden');
+  }
+
+  function renderTradeButtons(dec) {
+    const container = document.getElementById('trade-buttons');
+    const isActionable = dec.decision !== 'NO_TRADE' && dec.confidence !== 'LOW';
+
+    if (isActionable) {
+      const isBuy     = dec.decision === 'BUY';
+      const execClass = isBuy
+        ? 'bg-green-700 hover:bg-green-600 border border-green-500'
+        : 'bg-red-700 hover:bg-red-600 border border-red-500';
+      container.innerHTML = `
+        <button id="btn-exec" onclick="executeTrade()"
+          class="${execClass} text-white px-6 py-3 rounded-lg font-semibold transition-colors
+                 flex items-center gap-2 text-sm disabled:opacity-50">
+          ✓ Execute ${dec.decision} · ${dec.symbol} × ${dec.qty}
+        </button>
+        <button onclick="skipTrade()"
+          class="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300
+                 px-6 py-3 rounded-lg font-medium transition-colors text-sm">
+          ✗ Skip Trade
+        </button>`;
+    } else {
+      container.innerHTML = `
+        <button onclick="skipTrade()"
+          class="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-300
+                 px-6 py-3 rounded-lg font-medium transition-colors text-sm">
+          Log & Continue
+        </button>`;
+    }
+  }
+
+  // ── Step 3a: Execute ───────────────────────────────────────
+  async function executeTrade() {
+    const btn = document.getElementById('btn-exec');
+    if (btn) { btn.disabled = true; btn.textContent = 'Placing order…'; }
+    try {
+      const { ok, order, error } = await api('/api/execute', 'POST');
+      if (!ok) throw new Error(error);
+      showResult('success', order);
+    } catch (e) {
+      showResult('error', null, e.message);
+    }
+  }
+
+  // ── Step 3b: Skip ──────────────────────────────────────────
+  async function skipTrade() {
+    try {
+      const { ok, error } = await api('/api/skip', 'POST');
+      if (!ok) throw new Error(error);
+      showResult('skipped');
+    } catch (e) {
+      flashError('Skip failed: ' + e.message);
+    }
+  }
+
+  function showResult(type, order, errMsg) {
+    const el = document.getElementById('trade-result');
+    document.getElementById('trade-buttons').innerHTML = '';
+
+    if (type === 'success') {
+      el.innerHTML = `
+        <div class="rounded-xl border border-green-700 bg-green-950/40 p-5 fade-in">
+          <p class="text-green-400 font-semibold mb-3">✓ Order placed successfully</p>
+          <pre class="text-xs text-slate-400 bg-slate-900 rounded-lg p-3 overflow-x-auto">${JSON.stringify(order, null, 2)}</pre>
+        </div>`;
+    } else if (type === 'skipped') {
+      el.innerHTML = `
+        <div class="rounded-xl border border-slate-700 bg-slate-900 p-4 fade-in">
+          <p class="text-slate-400 font-medium">— Trade skipped and logged to journal</p>
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div class="rounded-xl border border-red-700 bg-red-950/40 p-4 fade-in">
+          <p class="text-red-400 font-semibold">✗ ${errMsg}</p>
+        </div>`;
+    }
+    el.classList.remove('hidden');
+    marketData = null; currentDecision = null;
+    setTimeout(loadJournal, 400);
+    if (activeSymbol) setTimeout(() => loadMarkers(activeSymbol), 600);
+  }
+
+  // ── Journal ────────────────────────────────────────────────
+  async function loadJournal() {
+    try {
+      const { entries } = await api('/api/journal');
+      renderJournal(entries);
+    } catch (_) {
+      document.getElementById('journal-feed').innerHTML =
+        '<p class="text-slate-600 text-sm">No entries yet.</p>';
+    }
+  }
+
+  function renderJournal(entries) {
+    const el = document.getElementById('journal-feed');
+    if (!entries.length) {
+      el.innerHTML = '<p class="text-slate-600 text-sm">No entries yet.</p>';
+      return;
+    }
+    el.innerHTML = entries.map(e => {
+      const dec = e.agent_decision;
+      const theme = {
+        BUY:      'text-green-400 border-green-900 bg-green-950/30',
+        SELL:     'text-red-400 border-red-900 bg-red-950/30',
+        NO_TRADE: 'text-slate-500 border-slate-800 bg-slate-900/50',
+      }[dec.decision] || 'text-slate-500 border-slate-800 bg-slate-900/50';
+
+      const confColor = { HIGH: 'text-green-400', MEDIUM: 'text-yellow-400', LOW: 'text-slate-500' }[dec.confidence] || 'text-slate-500';
+      const ts = new Date(e.timestamp);
+      const timeStr = ts.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const skipped = dec.reasoning && dec.reasoning.startsWith('[User skipped]');
+      const manual  = dec.reasoning && dec.reasoning.startsWith('[Manual ticket]');
+      const orderPlaced = e.order_result && e.order_result !== 'NO_ORDER_PLACED';
+
+      return `
+      <div class="rounded-xl border ${theme} p-4 flex items-start gap-4 fade-in">
+        <span class="text-xs font-bold px-2 py-1 rounded border ${theme} shrink-0 mt-0.5">
+          ${dec.decision}
+        </span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1">
+            ${dec.symbol ? `<span class="text-white font-semibold text-sm">${dec.symbol}</span>` : ''}
+            ${dec.qty    ? `<span class="text-slate-500 text-xs">× ${dec.qty}</span>` : ''}
+            ${skipped    ? `<span class="text-xs text-slate-600 italic">user skipped</span>` : ''}
+            ${manual     ? `<span class="text-xs text-blue-400 italic">manual</span>` : ''}
+            ${orderPlaced ? `<span class="text-xs text-green-400">✓ executed</span>` : ''}
+            <span class="ml-auto text-xs text-slate-600 shrink-0">${timeStr}</span>
+          </div>
+          <p class="text-slate-500 text-xs leading-relaxed line-clamp-2">
+            ${(dec.reasoning || '').replace('[User skipped] ', '').replace('[Manual ticket] ', '')}
+          </p>
+        </div>
+        <span class="${confColor} text-xs shrink-0">${dec.confidence}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Helpers ────────────────────────────────────────────────
+  async function api(url, method = 'GET') {
+    const res = await fetch(url, { method });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  function setBtn(btnId, labelId, spinId, label, loading) {
+    const btn  = document.getElementById(btnId);
+    const lbl  = document.getElementById(labelId);
+    const spin = document.getElementById(spinId);
+    btn.disabled       = loading;
+    lbl.textContent    = label;
+    spin.classList.toggle('hidden', !loading);
+  }
+
+  function show(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('hidden');
+    el.classList.add('fade-in');
+  }
+  function hide(id) { document.getElementById(id).classList.add('hidden'); }
+
+  function fmt(n) {
+    return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function flashError(msg) {
+    const div = document.createElement('div');
+    div.className = 'fixed top-4 right-4 z-50 bg-red-900/90 border border-red-600 text-red-200 text-sm px-4 py-3 rounded-xl fade-in';
+    div.textContent = msg;
+    document.body.appendChild(div);
+    setTimeout(() => div.remove(), 5000);
+  }
+  </script>
+</body>
+</html>

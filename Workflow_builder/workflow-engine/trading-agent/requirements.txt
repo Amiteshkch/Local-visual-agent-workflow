@@ -1,0 +1,6 @@
+requests
+numpy
+python-dotenv
+flask
+google-genai
+# ollama   # uncomment if using local Ollama instead of Gemini

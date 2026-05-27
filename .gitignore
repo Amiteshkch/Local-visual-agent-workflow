@@ -7,12 +7,33 @@ dist/
 # macOS
 .DS_Store
 
-# Sub-projects (separate repos)
-Workflow_builder/
-TradingView_Demo/
-hardware-health/
-n8n_global/
-workflow-engine/
+# Sub-projects kept out of this repo (use leading slash so they only match at root)
+/TradingView_Demo/
+/hardware-health/
+/n8n_global/
+/workflow-engine/
+
+# Workflow_builder is tracked, but exclude sensitive / runtime / personal files
+Workflow_builder/**/credentials.json
+Workflow_builder/**/.env
+Workflow_builder/**/.env.local
+Workflow_builder/**/__pycache__/
+Workflow_builder/**/*.pyc
+Workflow_builder/workflow-engine/storage/logs/
+Workflow_builder/workflow-engine/storage/workflows/
+Workflow_builder/workflow-engine/storage/researcher-results.json
+Workflow_builder/workflow-engine/storage/*.db
+Workflow_builder/workflow-engine/storage/*.sqlite*
+Workflow_builder/workflow-engine/*_workflow.json
+Workflow_builder/workflow-engine/my_first_workflow.json
+Workflow_builder/workflow-engine/PD_Amitesh_*
+Workflow_builder/workflow-engine/AI_Interview_*
+Workflow_builder/workflow-engine/generate_cv.py
+Workflow_builder/workflow-engine/generate_interview_qa.py
+Workflow_builder/workflow-engine/fsg_mixture_results.png
+Workflow_builder/workflow-engine/skim_milk_results.png
+Workflow_builder/workflow-engine/trading-agent/journal/
+Workflow_builder/workflow-engine/trading-agent/*.pdf
 
 # Misc files
 *.pdf

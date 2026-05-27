@@ -1,0 +1,8 @@
+node_modules/
+.npm-cache/
+storage/credentials.json
+storage/logs/
+storage/workflows/
+*.zip
+.DS_Store
+.env
