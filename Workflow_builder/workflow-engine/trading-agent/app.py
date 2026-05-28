@@ -18,7 +18,8 @@ from research import build_market_data, WATCHLIST
 from claude_decision import get_trade_decision
 from execution import execute
 from journal import write_entry
-from alpaca_client import is_market_open, get_bars, get_quote, place_order
+from broker import is_market_open, get_bars, get_quote, place_order
+import broker
 from indicators import ema_series, rsi_series
 import alerts as alerts_store
 
@@ -42,7 +43,21 @@ def status():
         open_ = is_market_open()
     except Exception:
         open_ = False
-    return jsonify({"market_open": open_, "server_time": datetime.now(timezone.utc).isoformat()})
+    return jsonify({
+        "market_open": open_,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+        "broker": broker.kind(),
+    })
+
+
+@app.route("/api/paper/reset", methods=["POST"])
+def paper_reset():
+    if broker.kind() != "paper":
+        return jsonify({"ok": False, "error": "Only available when BROKER=paper"}), 400
+    body = request.get_json(force=True, silent=True) or {}
+    starting_cash = body.get("starting_cash")
+    book = broker.reset_book(starting_cash)
+    return jsonify({"ok": True, "book": book})
 
 
 @app.route("/api/research", methods=["POST"])

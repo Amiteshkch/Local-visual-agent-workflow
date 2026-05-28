@@ -1,4 +1,4 @@
-from alpaca_client import is_market_open
+from broker import is_market_open
 from research import build_market_data
 from claude_decision import get_trade_decision
 from execution import execute

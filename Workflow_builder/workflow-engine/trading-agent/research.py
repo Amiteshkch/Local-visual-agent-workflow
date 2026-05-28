@@ -1,5 +1,5 @@
 import numpy as np
-from alpaca_client import get_account, get_quote, get_bars, get_positions
+from broker import get_account, get_quote, get_bars, get_positions
 
 WATCHLIST = ["NVDA", "AAPL", "MSFT"]
 

@@ -6,3 +6,22 @@ storage/workflows/
 *.zip
 .DS_Store
 .env
+
+# Trading agent
+trading-agent/.env
+trading-agent/__pycache__/
+trading-agent/journal/
+
+# Personal / local files
+PD_Amitesh*.html
+PD_Amitesh*.pdf
+AI_Interview_QA.pdf
+generate_cv.py
+generate_interview_qa.py
+Screenshot*.png
+
+# Job search agent workflows (separate private repo)
+job_agent_workflow.json
+job_search_workflow.json
+postdoc_agent_workflow.json
+researcher_agent_workflow.json

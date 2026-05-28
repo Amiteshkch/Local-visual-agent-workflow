@@ -78,6 +78,8 @@
       <span class="text-slate-600 text-sm">/ Dashboard</span>
     </div>
     <div class="flex items-center gap-5 text-sm">
+      <span id="broker-pill" class="hidden text-[10px] uppercase tracking-widest px-2 py-1 rounded border"></span>
+      <button id="reset-btn" class="hidden text-xs text-slate-500 hover:text-red-300" onclick="resetPaper()">Reset book</button>
       <div class="flex items-center gap-2">
         <span class="pulse bg-slate-500" id="status-dot"></span>
         <span id="status-text" class="text-slate-400">—</span>
@@ -593,6 +595,24 @@
     }
   }
 
+  async function resetPaper() {
+    if (!confirm('Reset paper book to starting cash and wipe all positions?')) return;
+    try {
+      const res = await fetch('/api/paper/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      flashAlert(`Paper book reset · cash $${Number(data.book.cash).toLocaleString()}`);
+      if (activeSymbol) loadChart(activeSymbol, activeTimeframe);
+      loadJournal();
+    } catch (e) {
+      flashError('Reset failed: ' + e.message);
+    }
+  }
+
   async function deleteAlert(id) {
     try {
       await fetch(`/api/alerts/${id}`, { method: 'DELETE' });
@@ -626,7 +646,17 @@
   // ── Market status ──────────────────────────────────────────
   async function checkStatus() {
     try {
-      const { market_open, server_time } = await api('/api/status');
+      const { market_open, server_time, broker } = await api('/api/status');
+      if (broker) {
+        const pill = document.getElementById('broker-pill');
+        const reset = document.getElementById('reset-btn');
+        pill.textContent = broker === 'paper' ? '📝 Paper' : '⚠ Live: ' + broker;
+        pill.className = (broker === 'paper'
+            ? 'text-[10px] uppercase tracking-widest px-2 py-1 rounded border text-amber-300 border-amber-700 bg-amber-950/40'
+            : 'text-[10px] uppercase tracking-widest px-2 py-1 rounded border text-red-300 border-red-700 bg-red-950/40');
+        pill.classList.remove('hidden');
+        if (broker === 'paper') reset.classList.remove('hidden');
+      }
       const dot  = document.getElementById('status-dot');
       const text = document.getElementById('status-text');
       if (market_open) {
