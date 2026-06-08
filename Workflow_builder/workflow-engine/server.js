@@ -871,6 +871,81 @@ Pick the 3–5 most relevant. Prioritise based on file types actually present.`;
   }
 });
 
+// ── /api/ai/build-workflow — AI Workflow Copilot ─────────────────────────────
+// Turns a plain-English goal into a validated workflow spec (catalog nodes +
+// edges) the studio can drop on the canvas and run. Mirrors /api/ai/suggest.
+const COPILOT_VALID_IDS = new Set([
+  "trigger-manual", "trigger-schedule", "trigger-webhook",
+  "web-research", "api-request", "document-extractor", "table-analyzer",
+  "if-else", "filter", "loop", "merge", "wait",
+  "data-cleaner", "code-js", "set-variable", "text-formatter",
+  "python-step", "chart-builder", "classifier", "insight-summarizer",
+  "claude-ai", "ai-suggest", "report-writer", "output-display", "slack-notify",
+]);
+
+function buildFallbackWorkflow(summary = {}, goal = "") {
+  const cats = summary.categories || {};
+  const nodes = [{ toolId: "trigger-manual", label: "Manual Trigger" }];
+  if ((cats.Documents || 0) > 0) nodes.push({ toolId: "document-extractor", label: "Document Extractor" }, { toolId: "insight-summarizer", label: "Insight Summarizer" });
+  if ((cats.Data || 0) > 0) nodes.push({ toolId: "table-analyzer", label: "CSV / Table Analyzer" }, { toolId: "data-cleaner", label: "Data Cleaner" });
+  if (nodes.length === 1) nodes.push({ toolId: "classifier", label: "Classifier / Tagger" });
+  nodes.push({ toolId: "report-writer", label: "Report Writer" }, { toolId: "output-display", label: "Output Display" });
+  const edges = nodes.slice(1).map((_, i) => [i, i + 1]);
+  return { name: goal.slice(0, 60) || "Suggested workflow", nodes, edges };
+}
+
+app.post("/api/ai/build-workflow", async (req, res) => {
+  const { goal = "", folderName = "Unnamed", summary = {}, files = [] } = req.body;
+  if (!String(goal).trim()) return res.status(400).json({ error: "A goal is required." });
+  const credentials = await storage.getCredentials();
+
+  const catLines = Object.entries(summary.categories || {})
+    .filter(([, c]) => c > 0).map(([cat, count]) => `  ${cat}: ${count}`).join("\n");
+
+  const prompt = `You are a workflow architect for a local visual agent builder. Convert the user's goal into a runnable node graph.
+
+User goal: "${goal}"
+Folder: "${folderName}" — ${summary.fileCount || 0} files
+Categories:\n${catLines || "  (none)"}
+Sample files: ${files.slice(0, 8).map(f => f.name).join(", ") || "none"}
+
+Return JSON only — no markdown:
+{
+  "name": "<short workflow name>",
+  "nodes": [ { "toolId": "<id>", "label": "<display name>" } ],
+  "edges": [ [fromIndex, toIndex] ]
+}
+Rules:
+- "edges" reference node positions in the "nodes" array (0-based), wiring the data flow in order.
+- Start with a trigger node (usually "trigger-manual") and end with "output-display".
+- Use 3–7 nodes. Only choose toolIds from this list:
+  trigger-manual, trigger-schedule, trigger-webhook, web-research, api-request, document-extractor,
+  table-analyzer, if-else, filter, loop, merge, wait, data-cleaner, code-js, set-variable, text-formatter,
+  python-step, chart-builder, classifier, insight-summarizer, claude-ai, ai-suggest, report-writer,
+  output-display, slack-notify
+- Pick nodes that match the file types actually present.`;
+
+  try {
+    const text = await callAI(prompt, credentials);
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("AI returned an unparseable response");
+    const parsed = JSON.parse(match[0]);
+    const rawNodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+    // Keep only valid nodes; remap edges to the filtered index space.
+    const keep = [], indexMap = {};
+    rawNodes.forEach((n, i) => {
+      if (n && COPILOT_VALID_IDS.has(n.toolId)) { indexMap[i] = keep.length; keep.push({ toolId: n.toolId, label: n.label || n.toolId }); }
+    });
+    const edges = (Array.isArray(parsed.edges) ? parsed.edges : [])
+      .map(e => Array.isArray(e) ? [indexMap[e[0]], indexMap[e[1]]] : null)
+      .filter(e => e && e[0] != null && e[1] != null && e[0] !== e[1]);
+    if (!keep.length) throw new Error("No valid nodes produced");
+    return res.json({ name: parsed.name || goal.slice(0, 60), nodes: keep, edges, provider: credentials.aiProvider || "claude" });
+  } catch (err) {
+    return res.json({ ...buildFallbackWorkflow(summary, goal), provider: credentials.aiProvider || "claude", fallback: true, warning: err.message });
+  }
+});
+
 app.post("/api/ai/task", async (req, res) => {
   const { task = "", folderName = "Unnamed", summary = {}, files = [], iterations = 4, agents = [] } = req.body;
   const credentials = await storage.getCredentials();
