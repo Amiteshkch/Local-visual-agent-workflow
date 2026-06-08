@@ -25,7 +25,7 @@ import {
   Activity, AlertTriangle, Archive, BarChart3, Bot, BrainCircuit, Braces, CheckCircle2,
   ChevronDown, ChevronRight, ChevronUp, ClipboardList, Clock, Code2, Copy, Database,
   Download, FileImage, FileSearch, FileText, Filter, FolderOpen, GitBranch, GitMerge,
-  Globe2, HardDrive, Info, Layers3, Link, LockKeyhole, MessageSquareText, PanelLeftClose,
+  Globe2, HardDrive, Info, Layers3, Link, LockKeyhole, Maximize2, MessageSquareText, Minus, PanelLeftClose,
   PanelLeftOpen, Pencil, Play, Plus, RefreshCw, Search, Settings, ShieldCheck,
   SlidersHorizontal, Sparkles, StickyNote, Table2, Tag, Trash2, Upload, Variable,
   Webhook, XCircle, Zap,
@@ -700,6 +700,7 @@ function LocalAgentPanel({ workflow, onClose, onRunComplete, onOpenOutput }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
   const [result, setResult] = useState(null);
+  const [minimized, setMinimized] = useState(false);   // collapse to a small bar while keeping the run alive
   const [elapsedMs, setElapsedMs] = useState(0);
   // Live SSE progress:
   //   totalAgents, totalPasses, completedPasses, currentAgent, currentPass, currentTitle, lines[]
@@ -1021,6 +1022,24 @@ ${agent.answer}`)
     }
   }, [task, agentTeam, includeFiles, iterations, files, selected, workflow?.folderName, summary, onRunComplete, onOpenOutput]);
 
+  // Minimized: collapse to a small floating bar so the canvas is fully usable.
+  // The component stays mounted, so an in-progress task keeps running.
+  if (minimized) {
+    const miniStatus = busy
+      ? (progress?.currentAgent ? `${progress.currentAgent}${progress.currentPass > 0 ? ` · pass ${progress.currentPass}` : ""}` : "Running…")
+      : result ? "Done" : "Ready";
+    return (
+      <div className={`local-agent-mini${busy ? " local-agent-mini--busy" : ""}`}
+           onClick={() => setMinimized(false)} title="Restore Local AI Agent">
+        <Bot size={15} />
+        <span className="lam-title">Local AI Agent</span>
+        <span className="lam-status">{busy && <span className="lalc-spinner">⟳</span>}{miniStatus}</span>
+        <button className="lam-btn" onClick={e => { e.stopPropagation(); setMinimized(false); }} title="Maximize"><Maximize2 size={13} /></button>
+        <button className="lam-btn" onClick={e => { e.stopPropagation(); onClose(); }} title="Close">✕</button>
+      </div>
+    );
+  }
+
   return (
     <div className="local-agent-panel">
       <div className="local-agent-header">
@@ -1089,6 +1108,7 @@ ${agent.answer}`)
             ? <button className="local-agent-stop" onClick={stopTask} title="Cancel the running task">■ Stop</button>
             : <button className="local-agent-run" onClick={runTask} disabled={!task.trim() && agentTeam.every(agent => !agent.task.trim())}>Run task</button>
           }
+          <button className="py-close-btn" onClick={() => setMinimized(true)} title="Minimize"><Minus size={15} /></button>
           <button className="py-close-btn" onClick={onClose} title="Close">x</button>
         </div>
       </div>
@@ -3877,8 +3897,26 @@ ${fileList}${s.fileCount > 100 ? `\n\n_...and ${s.fileCount - 100} more files._`
 
 // ─── Web Research Agent panel ─────────────────────────────────────────────────
 
+const RESEARCH_DOC_EXTS = new Set([".pdf", ".docx", ".doc", ".txt", ".md"]);
+
+// Build a search query from the most salient terms in some text (same keyword
+// approach as the Insight Summarizer), so research targets the file's content.
+function keywordsFromText(text, n = 6) {
+  const words = (text || "").toLowerCase().match(/\b[a-z][a-z-]{3,}\b/g) || [];
+  const freq = {};
+  for (const w of words) if (!STOP_WORDS.has(w)) freq[w] = (freq[w] || 0) + 1;
+  return Object.entries(freq).sort(([, a], [, b]) => b - a).slice(0, n).map(([w]) => w);
+}
+
 function WebResearchPanel({ workflow, onClose }) {
-  const [query, setQuery] = useState(() => workflow?.folderName || "");
+  const docFiles = useMemo(
+    () => (workflow?.files ?? []).filter(f => RESEARCH_DOC_EXTS.has(extensionOf(f.name))),
+    [workflow?.files],
+  );
+  const [scope, setScope]   = useState("all");          // "all" | file.path
+  const [query, setQuery]   = useState("");
+  const [deriving, setDeriving] = useState(false);
+  const [derivedFrom, setDerivedFrom] = useState(null); // description of what the query came from
   const searches = [
     { label: "Google Scholar", url: (q) => `https://scholar.google.com/scholar?q=${encodeURIComponent(q)}` },
     { label: "arXiv",          url: (q) => `https://arxiv.org/search/?query=${encodeURIComponent(q)}&searchtype=all` },
@@ -3887,23 +3925,68 @@ function WebResearchPanel({ workflow, onClose }) {
     { label: "PubMed",         url: (q) => `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(q)}` },
   ];
 
+  // Read the actual file content and turn its key terms into the query.
+  const deriveQuery = useCallback(async () => {
+    const targets = scope === "all" ? docFiles.slice(0, 8) : docFiles.filter(f => f.path === scope);
+    if (!targets.length) { setQuery(workflow?.folderName || ""); setDerivedFrom(null); return; }
+    setDeriving(true);
+    try {
+      let allText = "";
+      for (const f of targets) {
+        const x = await extractTextContent(f);
+        if (x?.content) allText += " " + x.content;
+      }
+      const top = keywordsFromText(allText, 6);
+      setQuery(top.length ? top.join(" ") : (workflow?.folderName || ""));
+      setDerivedFrom(top.length
+        ? (scope === "all" ? `content of ${targets.length} document${targets.length !== 1 ? "s" : ""}` : `content of "${targets[0].name}"`)
+        : null);
+    } finally {
+      setDeriving(false);
+    }
+  }, [scope, docFiles, workflow?.folderName]);
+
+  // Auto-derive from content on open and whenever the source changes.
+  useEffect(() => { deriveQuery(); }, [deriveQuery]);
+
   return (
     <ToolShell title="Web Research Agent" IconComponent={Globe2} onClose={onClose}>
-      <div className="tool-section-head">Search query</div>
+      <div className="tool-section-head">Research source</div>
       <div className="tool-search-row">
-        <input className="tool-query-input" value={query} onChange={e => setQuery(e.target.value)}
-               placeholder="Enter a research topic or keyword…" onKeyDown={e => e.key === "Enter" && searches[0].url && window.open(searches[0].url(query))} />
+        <select className="tool-method-select" style={{ flex: 1 }} value={scope} onChange={e => setScope(e.target.value)} disabled={!docFiles.length}>
+          <option value="all">All documents ({docFiles.length})</option>
+          {docFiles.slice(0, 200).map(f => <option key={f.path} value={f.path}>{f.name}</option>)}
+        </select>
+        <button className="tool-search-btn" onClick={deriveQuery} disabled={deriving || !docFiles.length} title="Re-read the content and rebuild the query">
+          {deriving ? "Reading…" : "↻ From content"}
+        </button>
       </div>
+
+      <div className="tool-section-head" style={{marginTop:12}}>Search query</div>
+      <div className="tool-search-row">
+        <input className="tool-query-input" value={query} onChange={e => { setQuery(e.target.value); setDerivedFrom("your edit"); }}
+               placeholder={deriving ? "Reading file content…" : "Enter a research topic or keyword…"}
+               onKeyDown={e => e.key === "Enter" && query.trim() && window.open(searches[0].url(query.trim()), "_blank")} />
+      </div>
+
       <div className="tool-section-head" style={{marginTop:12}}>Open search in new tab</div>
       <div className="tool-search-btns">
         {searches.map(s => (
-          <button key={s.label} className="tool-search-btn" disabled={!query.trim()}
+          <button key={s.label} className="tool-search-btn" disabled={!query.trim() || deriving}
                   onClick={() => window.open(s.url(query.trim()), "_blank")}>
             {s.label}
           </button>
         ))}
       </div>
-      <p className="tool-hint" style={{marginTop:12}}>Pre-filled with the folder name. Edit the query to refine your search.</p>
+      <p className="tool-hint" style={{marginTop:12}}>
+        {!docFiles.length
+          ? "No readable documents in this folder — type a topic to search."
+          : derivedFrom === "your edit"
+            ? "Using your edited query."
+            : derivedFrom
+              ? `Query built from the ${derivedFrom} (not the file name). Edit it or pick a single file above to refine.`
+              : "Pick a source above to build a query from its content."}
+      </p>
     </ToolShell>
   );
 }

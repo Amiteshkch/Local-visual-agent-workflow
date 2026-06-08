@@ -99,6 +99,14 @@ function interpolate(str, ctx) {
   });
 }
 
+// Top content terms (same approach as the Insight Summarizer) → search query.
+function keywordsFromText(text, n = 6) {
+  const words = (text || "").toLowerCase().match(/\b[a-z][a-z-]{3,}\b/g) || [];
+  const freq = {};
+  for (const w of words) if (!STOP_WORDS.has(w)) freq[w] = (freq[w] || 0) + 1;
+  return Object.entries(freq).sort(([, a], [, b]) => b - a).slice(0, n).map(([w]) => w);
+}
+
 function asText(v, limit = 4000) {
   if (v == null) return "";
   if (typeof v === "string") return v.slice(0, limit);
@@ -122,7 +130,28 @@ const EXECUTORS = {
   "trigger-webhook":  async (_n, ctx) => ({ output: ctx.folderContext, preview: "Webhook trigger (fired now)" }),
 
   "web-research": async (node, ctx) => {
-    const q = interpolate(node.config.query || "", ctx).trim() || ctx.folderName || asText(ctx.previousOutput, 80).trim();
+    // Prefer an explicit query; otherwise build one from CONTENT (upstream
+    // extracted text, or the folder's documents) — never just the folder name.
+    let q = interpolate(node.config.query || "", ctx).trim();
+    let source = q ? "configured query" : null;
+    if (!q) {
+      const prevFiles = ctx.previousOutput?.files;
+      let text = "";
+      if (Array.isArray(prevFiles) && prevFiles.length) {
+        text = prevFiles.map(f => f.text || f.content || "").join(" ");
+        source = "upstream content";
+      } else if (ctx.helpers.extractTextContent) {
+        const docs = ctx.files.filter(f => DOC_EXTS.has(extOf(f.name)));
+        for (const f of docs.slice(0, 8)) {
+          const x = await ctx.helpers.extractTextContent(f);
+          if (x?.content) text += " " + x.content;
+        }
+        if (text.trim()) source = `content of ${Math.min(docs.length, 8)} document(s)`;
+      }
+      const kws = keywordsFromText(text, 6);
+      if (kws.length) q = kws.join(" ");
+      else { q = ctx.folderName || ""; source = "folder name (no readable content)"; }
+    }
     const engines = {
       "Google Scholar": `https://scholar.google.com/scholar?q=${encodeURIComponent(q)}`,
       "arXiv": `https://arxiv.org/search/?query=${encodeURIComponent(q)}&searchtype=all`,
@@ -130,7 +159,7 @@ const EXECUTORS = {
       "Semantic Scholar": `https://www.semanticscholar.org/search?q=${encodeURIComponent(q)}&sort=Relevance`,
       "PubMed": `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(q)}`,
     };
-    return { output: { query: q, searches: engines }, preview: `Search links for "${q || "(empty)"}"` };
+    return { output: { query: q, source, searches: engines }, preview: `Query (${source || "n/a"}): "${q || "(empty)"}"` };
   },
 
   "api-request": async (node, ctx) => {
