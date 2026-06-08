@@ -5064,25 +5064,6 @@ function App() {
     }
   }, [activeWorkflow, workflowSummary]);
 
-  const placeCopilotSpec = useCallback((spec, { run = false } = {}) => {
-    const toolNodes = spec.nodes.map((n, i) =>
-      createToolNode(n.tool, { x: 380 + i * 250, y: 470 + (i % 2) * 80 }, i + 1));
-    const edges = (spec.edges || [])
-      .filter(([a, b]) => toolNodes[a] && toolNodes[b] && a !== b)
-      .map(([a, b], i) => ({
-        id: `manual-${toolNodes[a].id}-${toolNodes[b].id}-${i}`,
-        source: toolNodes[a].id, target: toolNodes[b].id,
-        type: "smoothstep", animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-        style: { strokeWidth: 2.3 },
-      }));
-    updateWorkflow(activeWorkflowId, { customToolNodes: toolNodes, manualEdges: edges });
-    setShowCopilot(false);
-    setCopilotState(null);
-    setStatus({ type: "success", text: `Copilot built "${spec.name}" — ${toolNodes.length} nodes, ${edges.length} connections.` });
-    if (run) setTimeout(() => runActiveWorkflow(), 150);
-  }, [activeWorkflowId, updateWorkflow, runActiveWorkflow]);
-
   // ── node interactions ─────────────────────────────────────────────────────
 
   const handleNodeDrillDown = useCallback(async (wfId, nodeData, files, folderName) => {
@@ -5341,6 +5322,26 @@ function App() {
   }, [running, activeWorkflow, workflowVars]);
 
   const cancelRun = useCallback(() => { runAbortRef.current?.abort(); }, []);
+
+  // Defined after runActiveWorkflow so the dependency reference is initialized.
+  const placeCopilotSpec = useCallback((spec, { run = false } = {}) => {
+    const toolNodes = spec.nodes.map((n, i) =>
+      createToolNode(n.tool, { x: 380 + i * 250, y: 470 + (i % 2) * 80 }, i + 1));
+    const edges = (spec.edges || [])
+      .filter(([a, b]) => toolNodes[a] && toolNodes[b] && a !== b)
+      .map(([a, b], i) => ({
+        id: `manual-${toolNodes[a].id}-${toolNodes[b].id}-${i}`,
+        source: toolNodes[a].id, target: toolNodes[b].id,
+        type: "smoothstep", animated: true,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+        style: { strokeWidth: 2.3 },
+      }));
+    updateWorkflow(activeWorkflowId, { customToolNodes: toolNodes, manualEdges: edges });
+    setShowCopilot(false);
+    setCopilotState(null);
+    setStatus({ type: "success", text: `Copilot built "${spec.name}" — ${toolNodes.length} nodes, ${edges.length} connections.` });
+    if (run) setTimeout(() => runActiveWorkflow(), 150);
+  }, [activeWorkflowId, updateWorkflow, runActiveWorkflow]);
 
   const exportWorkflow = useCallback(() => {
     const edits  = fileChanges[activeWorkflowId] || [];
