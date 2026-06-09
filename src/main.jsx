@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { runWorkflow as runWorkflowEngine, planRun, buildRunGraph } from "./workflowRunner.js";
+import { idbGet, idbSet } from "./idb.js";
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -2601,10 +2602,76 @@ function RunStep({ step }) {
   );
 }
 
-function RunConsole({ currentRun, running, history, onClose, onClearHistory }) {
+// ─── Custom agent tool builder ────────────────────────────────────────────────
+
+function slugifyTool(name) {
+  return (name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "agent";
+}
+
+function CustomAgentBuilder({ initial, onSave, onClose }) {
+  const cfg = initial?.config || {};
+  const [name, setName] = useState(initial?.label || "");
+  const [systemPrompt, setSystemPrompt] = useState(cfg.systemPrompt || "");
+  const [task, setTask] = useState(cfg.task || "");
+  const [usePrev, setUsePrev] = useState(cfg.usePrev !== false);
+  const [useFiles, setUseFiles] = useState(!!cfg.useFiles);
+
+  const save = () => {
+    if (!name.trim()) return;
+    const def = {
+      id: initial?.id || `custom-${slugifyTool(name)}-${Date.now().toString(36)}`,
+      label: name.trim(),
+      subtitle: "Custom agent",
+      note: (systemPrompt || task || "Custom AI agent").slice(0, 140),
+      category: "Custom",
+      tone: "agent",
+      kind: "agent",
+      config: { kind: "agent", systemPrompt: systemPrompt.trim(), task: task.trim(), usePrev, useFiles },
+    };
+    onSave(def);
+  };
+
+  return (
+    <div className="ai-overlay" onClick={onClose}>
+      <div className="ai-panel copilot-panel" onClick={e => e.stopPropagation()}>
+        <div className="ai-panel-header">
+          <span><Bot size={15}/> {initial ? "Edit agent tool" : "New agent tool"}</span>
+          <button className="ai-close-btn" onClick={onClose}>✕</button>
+        </div>
+        <p className="copilot-intro">Define a reusable AI agent. It runs through your configured AI model (set in “AI model”) and can read the previous node’s output and/or the folder’s files.</p>
+
+        <div className="cab-field">
+          <label>Name</label>
+          <input className="copilot-input" style={{ minHeight: 0, height: 38 }} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Methodology Critic" />
+        </div>
+        <div className="cab-field">
+          <label>Role / system prompt</label>
+          <textarea className="copilot-input" rows={2} value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} placeholder="You are an expert research reviewer who…" />
+        </div>
+        <div className="cab-field">
+          <label>Task instructions</label>
+          <textarea className="copilot-input" rows={2} value={task} onChange={e => setTask(e.target.value)} placeholder="Critique the methodology and list 3 weaknesses." />
+        </div>
+        <div className="cab-checks">
+          <label><input type="checkbox" checked={usePrev} onChange={e => setUsePrev(e.target.checked)} /> Use previous node output as input</label>
+          <label><input type="checkbox" checked={useFiles} onChange={e => setUseFiles(e.target.checked)} /> Include the folder’s files</label>
+        </div>
+
+        <button className="button primary copilot-build" disabled={!name.trim()} onClick={save}>
+          <Bot size={15}/> {initial ? "Save changes" : "Create tool"}
+        </button>
+        <p className="tool-hint" style={{ margin: "0 18px 16px" }}>Saved tools appear in the palette for every workflow.</p>
+      </div>
+    </div>
+  );
+}
+
+function RunConsole({ currentRun, running, history, activeWorkflowId, onClose, onClearHistory }) {
   const [tab, setTab] = useState("current");
   const [openRun, setOpenRun] = useState(null);
+  const [scope, setScope] = useState("this"); // "this" | "all"
   const run = currentRun;
+  const shownHistory = scope === "this" ? history.filter(h => h.workflowId === activeWorkflowId) : history;
   return (
     <div className="run-console">
       <div className="run-console-head">
@@ -2634,10 +2701,17 @@ function RunConsole({ currentRun, running, history, onClose, onClearHistory }) {
           )
         )}
         {tab === "history" && (
-          !history.length ? <div className="run-empty">No runs yet.</div> : (
-            <>
-              <div className="run-history-actions"><button className="run-tab" onClick={onClearHistory}>Clear history</button></div>
-              {history.map((h, i) => (
+          <>
+            <div className="run-history-actions">
+              <div className="run-scope">
+                <button className={`run-tab${scope === "this" ? " active" : ""}`} onClick={() => setScope("this")}>This workflow</button>
+                <button className={`run-tab${scope === "all" ? " active" : ""}`} onClick={() => setScope("all")}>All</button>
+              </div>
+              <button className="run-tab" onClick={onClearHistory}>Clear</button>
+            </div>
+            {!shownHistory.length
+              ? <div className="run-empty">{scope === "this" ? "No runs for this workflow yet." : "No runs yet."}</div>
+              : shownHistory.map((h, i) => (
                 <div key={h.id || i} className={`run-hist-row run-hist-row--${h.status}`}>
                   <div className="run-step-head" onClick={() => setOpenRun(openRun === i ? null : i)}>
                     <span className={`run-dot run-dot--${RUN_DOT[h.status] || "idle"}`} />
@@ -2649,8 +2723,7 @@ function RunConsole({ currentRun, running, history, onClose, onClearHistory }) {
                   {openRun === i && <div className="run-steps">{(h.steps || []).map((s, j) => <RunStep key={j} step={s} />)}</div>}
                 </div>
               ))}
-            </>
-          )
+          </>
         )}
       </div>
     </div>
@@ -4759,7 +4832,8 @@ function createToolNode(tool, position, sequence) {
   return { id:`tool-${tool.id}-${sequence}`, type:"workflowNode", position,
     data:{ label:tool.label, subtitle:tool.subtitle, icon:tool.icon, tone:tool.tone,
            status:"Ready", metrics:[{label:"Tool",value:tool.category}],
-           note:tool.note, customToolId:tool.id, custom:true } };
+           note:tool.note, customToolId:tool.id, custom:true,
+           ...(tool.config ? { config: tool.config } : {}) } };
 }
 function normalizeDirectoryFiles(fileList) {
   return Array.from(fileList).map(f => ({
@@ -4768,6 +4842,56 @@ function normalizeDirectoryFiles(fileList) {
   }));
 }
 const EMPTY_WF = () => ({ id:`wf-${Date.now()}`, folderName:"", files:[], customToolNodes:[], manualEdges:[], runState:"idle", pythonNodeCode:{} });
+
+// ─── workflow (de)serialization — shared by import/export and persistence ──────
+// Icons are React components and files carry FileSystem handles/blobs; neither
+// survives JSON. We persist the graph + config and re-derive icons on load.
+function iconForToolId(toolId, customTools = []) {
+  const builtin = TOOL_CATALOG.find(c => c.id === toolId);
+  if (builtin) return builtin.icon;
+  if (customTools.find(c => c.id === toolId)) return Bot;
+  return toolId?.startsWith("custom-") ? Bot : Layers3;
+}
+
+function serializeWorkflow(wf) {
+  return {
+    id: wf.id,
+    folderName: wf.folderName || "",
+    customToolNodes: (wf.customToolNodes || []).map(n => ({
+      id: n.id, type: n.type, position: n.position,
+      data: n.type === "stickyNote"
+        ? { text: n.data?.text ?? "", colorIdx: n.data?.colorIdx ?? 0 }
+        : {
+            label: n.data?.label, subtitle: n.data?.subtitle, tone: n.data?.tone,
+            status: n.data?.status, note: n.data?.note, metrics: n.data?.metrics,
+            customToolId: n.data?.customToolId, custom: n.data?.custom,
+            config: n.data?.config,
+          },
+    })),
+    manualEdges: wf.manualEdges || [],
+    pythonNodeCode: wf.pythonNodeCode || {},
+    ...(wf.variables ? { variables: wf.variables } : {}),
+  };
+}
+
+function deserializeWorkflow(json, customTools = []) {
+  const base = EMPTY_WF();
+  return {
+    ...base,
+    id: json.id || base.id,
+    folderName: json.folderName || "",
+    files: [],
+    customToolNodes: (json.customToolNodes || []).map(n => ({
+      ...n,
+      data: n.type === "stickyNote"
+        ? { ...n.data }
+        : { ...n.data, icon: iconForToolId(n.data?.customToolId, customTools) },
+    })),
+    manualEdges: json.manualEdges || [],
+    pythonNodeCode: json.pythonNodeCode || {},
+    runState: "idle",
+  };
+}
 
 // ─── resizable hook ───────────────────────────────────────────────────────────
 // Returns [size | null, onMouseDown, ref].
@@ -4808,8 +4932,24 @@ function App() {
   const fallbackInputRef = useRef(null);
   const pendingNewWf = useRef(false);
 
-  const [workflowList, setWorkflowList]   = useState(() => { const w=EMPTY_WF(); return [w]; });
-  const [activeWorkflowId, setActiveWorkflowId] = useState(() => workflowList[0].id);
+  const [workflowList, setWorkflowList]   = useState(() => {
+    // Restore the last session's canvas (graph only — files come back via reconnect).
+    try {
+      const saved = JSON.parse(localStorage.getItem("las-workspace") || "null");
+      if (saved?.workflows?.length) {
+        const lib = JSON.parse(localStorage.getItem("las-custom-tools") || "[]");
+        return saved.workflows.map(w => deserializeWorkflow(w, lib));
+      }
+    } catch {}
+    return [EMPTY_WF()];
+  });
+  const [activeWorkflowId, setActiveWorkflowId] = useState(() => {
+    try {
+      const id = localStorage.getItem("las-active-wf");
+      if (id && workflowList.some(w => w.id === id)) return id;
+    } catch {}
+    return workflowList[0].id;
+  });
   const [search, setSearch]               = useState("");
   const [toolSearch, setToolSearch]       = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -4843,6 +4983,26 @@ function App() {
   // ── AI Workflow Copilot ────────────────────────────────────────────────────
   const [showCopilot, setShowCopilot] = useState(false);
   const [copilotState, setCopilotState] = useState(null); // { loading } | { error } | { spec }
+
+  // ── Custom agent tools (global reusable library) ────────────────────────────
+  const [customTools, setCustomTools] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("las-custom-tools") || "[]"); } catch { return []; }
+  });
+  const [customBuilder, setCustomBuilder] = useState(null); // { mode:"new"|"editDef"|"editNode", def?, nodeId? }
+  useEffect(() => {
+    try { localStorage.setItem("las-custom-tools", JSON.stringify(customTools)); } catch {}
+  }, [customTools]);
+
+  // Auto-save the workspace (graph only) so the canvas is restored next session.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem("las-workspace", JSON.stringify({ workflows: workflowList.map(serializeWorkflow), savedAt: Date.now() }));
+        localStorage.setItem("las-active-wf", activeWorkflowId);
+      } catch {}
+    }, 600);
+    return () => clearTimeout(t);
+  }, [workflowList, activeWorkflowId]);
 
   // ── resize handles ────────────────────────────────────────────────────────
   const [sidebarW,   sidebarResizeDown,  sidebarRef]  = useResizableEl("x", 240, 560);
@@ -5078,14 +5238,34 @@ function App() {
       setStatus({ type:"info", text:"Waiting for folder permission…" });
       const handle = await window.showDirectoryPicker({ mode:"read" });
       const collected = await scanFolderHandle(handle);
-      if (targetId==="new") addWorkflow({ folderName:handle.name, files:collected });
-      else updateWorkflow(id, { folderName:handle.name, files:collected, runState:"idle" });
+      const wfId = targetId==="new"
+        ? addWorkflow({ folderName:handle.name, files:collected })
+        : (updateWorkflow(id, { folderName:handle.name, files:collected, runState:"idle" }), id);
+      // Remember the folder so it can be reconnected next session without a fresh pick.
+      idbSet(`folder:${wfId}`, handle).catch(() => {});
       setStatus({ type:"success", text:`Loaded ${collected.length} files from "${handle.name}".` });
     } catch(err) {
       if (err?.name!=="AbortError") setStatus({ type:"error", text:`Could not read folder: ${err?.message}` });
       else setStatus({ type:"warning", text:"Folder access cancelled." });
     }
   }, [activeWorkflowId, addWorkflow, updateWorkflow]);
+
+  // Re-grant access to a previously connected folder (handle stored in IndexedDB)
+  // and re-scan it — so a restored session can repopulate its files in one click.
+  const reconnectFolder = useCallback(async () => {
+    try {
+      const handle = await idbGet(`folder:${activeWorkflowId}`);
+      if (!handle) { setStatus({ type:"warning", text:"No saved folder for this workflow — use Connect local folder." }); return; }
+      const perm = await handle.requestPermission?.({ mode:"read" });
+      if (perm && perm !== "granted") { setStatus({ type:"warning", text:"Folder permission was not granted." }); return; }
+      setStatus({ type:"info", text:`Reconnecting "${handle.name}"…` });
+      const collected = await scanFolderHandle(handle);
+      updateWorkflow(activeWorkflowId, { folderName:handle.name, files:collected, runState:"idle" });
+      setStatus({ type:"success", text:`Reconnected "${handle.name}" — ${collected.length} files.` });
+    } catch (err) {
+      setStatus({ type:"error", text:`Reconnect failed: ${err?.message}` });
+    }
+  }, [activeWorkflowId, updateWorkflow]);
 
   const handleFallbackFiles = useCallback(e => {
     const selected = normalizeDirectoryFiles(e.target.files||[]);
@@ -5184,6 +5364,13 @@ function App() {
       return;
     }
 
+    // Custom agent tool — open the builder to edit this placed node's config
+    if (toolId?.startsWith("custom-") || node.data?.config?.kind === "agent") {
+      const localId = node.id.includes("|") ? node.id.slice(node.id.indexOf("|") + 1) : node.id;
+      setCustomBuilder({ mode:"editNode", nodeId: localId, def: { id: toolId, label: node.data?.label, config: node.data?.config } });
+      return;
+    }
+
     // Custom tool nodes
     if (toolId === "python-step" || node.data?.label === "Python Analysis Step" || node.data?.label === "Python / IDE Opener") {
       setIdeOpener({ workflowId: wfId });
@@ -5244,6 +5431,32 @@ function App() {
     }));
     setStatus({ type:"info", text:"Removed custom tool nodes." });
   }, [activeWorkflow, activeWorkflowId, updateWorkflow]);
+
+  // ── custom agent tool library ──────────────────────────────────────────────
+  const deleteCustomTool = useCallback((id) => {
+    setCustomTools(prev => prev.filter(t => t.id !== id));
+    setStatus({ type:"info", text:"Removed custom tool from the library." });
+  }, []);
+
+  const handleBuilderSave = useCallback((def) => {
+    const builder = customBuilder;
+    if (builder?.mode === "editNode") {
+      // Update the placed node's config in-place.
+      updateWorkflow(activeWorkflowId, w => ({
+        customToolNodes: w.customToolNodes.map(n => n.id === builder.nodeId
+          ? { ...n, data: { ...n.data, label: def.label, note: def.note, config: def.config } } : n),
+      }));
+    } else {
+      // New or edited library def — upsert into the global library.
+      setCustomTools(prev => {
+        const i = prev.findIndex(t => t.id === def.id);
+        if (i >= 0) { const c = [...prev]; c[i] = def; return c; }
+        return [...prev, def];
+      });
+    }
+    setCustomBuilder(null);
+    setStatus({ type:"success", text:`Saved agent tool "${def.label}".` });
+  }, [customBuilder, activeWorkflowId, updateWorkflow]);
 
   const handleAISuggestAdd = useCallback((toolId) => {
     const tool = TOOL_CATALOG.find(t => t.id === toolId);
@@ -5321,24 +5534,32 @@ function App() {
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        const nw = EMPTY_WF();
-        nw.folderName = data.folderName || data.name || "Imported workflow";
-        // Restore custom tool nodes from the exported workflow nodes
-        if (data.workflow?.nodes) {
-          nw.customToolNodes = data.workflow.nodes
-            .filter(n => n.type === "workflowNode" && n.data?.custom)
-            .map(n => ({ ...n, id: `tool-imported-${n.id}-${Date.now()}` }));
+        // Merge any bundled custom-tool defs into the global library (don't clobber existing).
+        let lib = customTools;
+        if (Array.isArray(data.customTools) && data.customTools.length) {
+          setCustomTools(prev => {
+            const byId = new Map(prev.map(t => [t.id, t]));
+            for (const def of data.customTools) if (!byId.has(def.id)) byId.set(def.id, def);
+            lib = [...byId.values()];
+            return lib;
+          });
         }
+        // Support the v2 format (serialized workflow) with a graceful fallback.
+        const wfJson = data.workflow?.customToolNodes ? data.workflow
+          : { folderName: data.folderName || data.name, customToolNodes: [], manualEdges: [] };
+        const nw = deserializeWorkflow({ ...wfJson, id: `wf-${Date.now()}` }, lib);
+        nw.folderName = wfJson.folderName || "Imported workflow";
+        if (wfJson.variables) setWorkflowVars(wfJson.variables);
         setWorkflowList(prev => [...prev, nw]);
         setActiveWorkflowId(nw.id);
-        setStatus({ type: "success", text: `Imported "${nw.folderName}".` });
+        setStatus({ type: "success", text: `Imported "${nw.folderName}" — ${nw.customToolNodes.length} node(s), ${nw.manualEdges.length} connection(s).` });
       } catch {
         setStatus({ type: "error", text: "Invalid workflow JSON." });
       }
       e.target.value = "";
     };
     reader.readAsText(file);
-  }, []);
+  }, [customTools]);
 
   // ── Keyboard shortcut: Ctrl+K → command palette ────────────────────────────
   useEffect(() => {
@@ -5427,25 +5648,29 @@ function App() {
   }, [activeWorkflowId, updateWorkflow, runActiveWorkflow]);
 
   const exportWorkflow = useCallback(() => {
-    const edits  = fileChanges[activeWorkflowId] || [];
-    const built  = buildWorkflow(activeWorkflow.files, activeWorkflow.folderName, activeWorkflow.runState, activeWorkflow.customToolNodes, edits);
-    const payload = { app:"local-n8n-agent-workflow-ui", folderName:activeWorkflow.folderName,
-                      generatedAt:new Date().toISOString(), files:activeWorkflow.files,
-                      fileEdits:edits, summary:built.summary,
-                      workflow:toExportableWorkflow({...built,edges:[...built.edges,...activeWorkflow.manualEdges]}) };
+    // Bundle the custom-tool defs this workflow references so it rebuilds on import (here or elsewhere).
+    const usedIds = new Set(activeWorkflow.customToolNodes.map(n => n.data?.customToolId).filter(id => id?.startsWith("custom-")));
+    const payload = {
+      app: "local-agent-studio", version: 2,
+      generatedAt: new Date().toISOString(),
+      customTools: customTools.filter(t => usedIds.has(t.id)),
+      workflow: serializeWorkflow({ ...activeWorkflow, variables: workflowVars }),
+    };
     const blob = new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
     const url  = URL.createObjectURL(blob);
-    Object.assign(document.createElement("a"),{href:url,download:"local-agent-workflow.json"}).click();
+    Object.assign(document.createElement("a"),{href:url,download:`${activeWorkflow.folderName||"local-agent"}-workflow.json`}).click();
     URL.revokeObjectURL(url);
-    setStatus({ type:"success", text:"Exported local-agent-workflow.json." });
-  }, [activeWorkflow, activeWorkflowId, fileChanges]);
+    setStatus({ type:"success", text:"Exported workflow JSON (nodes, connections, custom tools)." });
+  }, [activeWorkflow, workflowVars, customTools]);
 
   // ── derived UI data ───────────────────────────────────────────────────────
 
   const filteredTools = useMemo(() => {
+    const lib = customTools.map(t => ({ ...t, icon: Bot, custom: true }));
+    const all = [...lib, ...TOOL_CATALOG];
     const q=toolSearch.trim().toLowerCase();
-    return q?TOOL_CATALOG.filter(t=>[t.label,t.category,t.subtitle].some(v=>v.toLowerCase().includes(q))):TOOL_CATALOG;
-  }, [toolSearch]);
+    return q?all.filter(t=>[t.label,t.category,t.subtitle].some(v=>(v||"").toLowerCase().includes(q))):all;
+  }, [toolSearch, customTools]);
 
   const sortedFiles = useMemo(() => {
     const q=search.trim().toLowerCase();
@@ -5489,6 +5714,12 @@ function App() {
           <button className="button primary sidebar-connect" type="button" onClick={()=>connectWithDirectoryPicker()}>
             <FolderOpen size={18}/> Connect local folder
           </button>
+          {activeWorkflow.folderName && !activeWorkflow.files.length && (
+            <button className="button secondary sidebar-reconnect" type="button" onClick={reconnectFolder}
+                    title="Re-grant access to the folder from your last session">
+              <RefreshCw size={16}/> Reconnect “{activeWorkflow.folderName}”
+            </button>
+          )}
           <input ref={fallbackInputRef} className="visually-hidden" type="file" webkitdirectory="" directory="" multiple onChange={handleFallbackFiles}/>
 
           {running
@@ -5517,7 +5748,10 @@ function App() {
             <button className="button secondary" type="button" onClick={() => setShowRunConsole(v => !v)}>
               <Activity size={16}/> Runs
             </button>
-            <button className="button secondary" type="button" onClick={exportWorkflow} disabled={!activeWorkflow.files.length}>
+            <button className="button secondary" type="button" onClick={() => importFileRef.current?.click()} title="Import a workflow JSON">
+              <Upload size={16}/> Import
+            </button>
+            <button className="button secondary" type="button" onClick={exportWorkflow} disabled={!activeWorkflow.customToolNodes.length}>
               <Download size={16}/> Export
             </button>
           </div>
@@ -5538,7 +5772,10 @@ function App() {
         >
           <div className="palette-head">
             <div><strong>Agent tools</strong><small>Drag tools onto the canvas</small></div>
-            <button className="icon-button" type="button" onClick={clearCustomTools} disabled={!activeWorkflow.customToolNodes.length}>Clear</button>
+            <div className="palette-head-actions">
+              <button className="icon-button palette-new-btn" type="button" onClick={() => setCustomBuilder({ mode:"new" })} title="Create a custom AI agent tool"><Plus size={13}/> New</button>
+              <button className="icon-button" type="button" onClick={clearCustomTools} disabled={!activeWorkflow.customToolNodes.length}>Clear</button>
+            </div>
           </div>
           <label className="palette-search">
             <Search size={15}/>
@@ -5548,6 +5785,12 @@ function App() {
             {filteredTools.map(tool=>(
               <div className="tool-row" key={tool.id}>
                 <ToolPaletteItem tool={tool}/>
+                {tool.custom && tool.kind === "agent" && (
+                  <>
+                    <button className="tool-icon-btn" type="button" title="Edit tool" onClick={()=>setCustomBuilder({ mode:"editDef", def:tool })}><Pencil size={13}/></button>
+                    <button className="tool-icon-btn" type="button" title="Delete tool" onClick={()=>deleteCustomTool(tool.id)}><Trash2 size={13}/></button>
+                  </>
+                )}
                 <button className="add-tool-button" type="button" onClick={()=>addToolToCanvas(tool)}>Add</button>
               </div>
             ))}
@@ -5822,11 +6065,20 @@ function App() {
         />
       )}
 
+      {customBuilder && (
+        <CustomAgentBuilder
+          initial={customBuilder.def}
+          onSave={handleBuilderSave}
+          onClose={() => setCustomBuilder(null)}
+        />
+      )}
+
       {showRunConsole && (
         <RunConsole
           currentRun={currentRun}
           running={running}
           history={runHistory}
+          activeWorkflowId={activeWorkflowId}
           onClose={() => setShowRunConsole(false)}
           onClearHistory={() => { setRunHistory([]); try { localStorage.removeItem("las-run-history"); } catch {} }}
         />
