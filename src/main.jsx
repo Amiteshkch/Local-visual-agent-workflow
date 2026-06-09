@@ -3,7 +3,10 @@ import { createRoot } from "react-dom/client";
 import {
   addEdge,
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Handle,
   MarkerType,
 
@@ -55,6 +58,26 @@ const CATEGORY_META = {
 };
 
 const NODE_TYPES = { workflowNode: WorkflowNode, workflowHeader: WorkflowHeaderNode, stickyNote: StickyNoteNode };
+
+// Smooth-step edge with a ✕ button at its midpoint (shown on hover) for quick
+// disconnection. `data.onDelete(id)` is injected per-edge in the App.
+function DeletableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }) {
+  const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  return (
+    <>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
+      <EdgeLabelRenderer>
+        <button
+          className="edge-del"
+          style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}
+          onClick={(e) => { e.stopPropagation(); data?.onDelete?.(id); }}
+          title="Remove this connection"
+        >×</button>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+const EDGE_TYPES = { deletable: DeletableEdge };
 
 const TOOL_CATALOG = [
   // ── Triggers ──────────────────────────────────────────────────────────────
@@ -4914,7 +4937,7 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
+      <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} edgeTypes={EDGE_TYPES}
                  onNodesChange={combinedNodesChange} onEdgesChange={handleEdgesChange}
                  onConnect={onConnect} onNodeClick={onNodeClick}
                  onNodeDoubleClick={onNodeDoubleClick}
@@ -5384,6 +5407,7 @@ function App() {
       if (n.type === "stickyNote" || n.data?.custom) deleteToolNode(n.id);
     }
   }, [deleteToolNode]);
+  const handleDeleteEdgeById = useCallback((edgeId) => { handleDeleteEdges([{ id: edgeId }]); }, [handleDeleteEdges]);
 
   // ── inject callbacks into derived nodes ──────────────────────────────────
 
@@ -5416,6 +5440,12 @@ function App() {
     }),
     [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, deleteToolNode, nodeRunStatus, simPlan, activeWorkflowId],
   );
+
+  // User-created edges (touching a tool/sticky node) get the deletable ✕ edge.
+  const derivedEdgesUI = useMemo(() => derivedEdges.map(e => {
+    const userEdge = e.source.includes("|tool-") || e.target.includes("|tool-") || e.source.includes("|sticky-") || e.target.includes("|sticky-");
+    return userEdge ? { ...e, type: "deletable", data: { ...e.data, onDelete: handleDeleteEdgeById } } : e;
+  }), [derivedEdges, handleDeleteEdgeById]);
 
   // ── folder scanning ───────────────────────────────────────────────────────
 
@@ -6158,7 +6188,7 @@ function App() {
 
         <ReactFlowProvider>
           <AppCanvas
-            derivedNodes={derivedNodes} derivedEdges={derivedEdges}
+            derivedNodes={derivedNodes} derivedEdges={derivedEdgesUI}
             workflowCount={workflowList.length}
             canvasH={canvasH} canvasRef={canvasFrameRef}
             onNodeClick={handleNodeClick}

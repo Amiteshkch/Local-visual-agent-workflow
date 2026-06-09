@@ -5061,3 +5061,16 @@ h1 {
 .node-config-field { display: flex; flex-direction: column; gap: 5px; }
 .node-config-field > span { font-size: 11px; font-weight: 700; color: var(--muted); }
 .node-config-field .copilot-input, .node-config-field .tool-method-select { width: 100%; }
+
+/* ── deletable edge ✕ (shown on hover) ────────────────────────────────────── */
+.edge-del {
+  position: absolute; pointer-events: all;
+  width: 20px; height: 20px; border-radius: 999px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel); color: var(--orange-dark);
+  border: 1px solid var(--line); box-shadow: 0 2px 6px rgba(21,16,10,0.2);
+  font-size: 14px; line-height: 1; cursor: pointer;
+  opacity: 0; transition: opacity .12s, background .12s, color .12s;
+}
+.react-flow__edge:hover .edge-del { opacity: 1; }
+.edge-del:hover { background: var(--orange-dark); color: #fff; border-color: var(--orange-dark); }
