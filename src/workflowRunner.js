@@ -351,6 +351,33 @@ const EXECUTORS = {
   "slack-notify": async (node, ctx) => ({ output: ctx.previousOutput, preview: `Would post to Slack: ${asText(ctx.previousOutput, 80)}` }),
 
   "output-display": async (_node, ctx) => ({ output: ctx.previousOutput, preview: `Final output ready · ${asText(ctx.previousOutput, 120)}` }),
+
+  // User-defined agent tool (config.kind === "agent"). Runs through the same
+  // /api/ai/task backend the Local AI Agent uses.
+  "custom-agent": async (node, ctx) => {
+    const cfg = node.config || {};
+    const parts = [];
+    if (cfg.systemPrompt) parts.push(cfg.systemPrompt);
+    if (cfg.task) parts.push(cfg.task);
+    if (cfg.usePrev !== false && ctx.previousOutput != null) parts.push("INPUT DATA:\n" + asText(ctx.previousOutput, 6000));
+    const task = parts.join("\n\n") || "Describe what you can do with this workflow's data.";
+    let files = [];
+    if (cfg.useFiles && ctx.helpers.extractTextContent) {
+      for (const f of ctx.files.slice(0, 6)) {
+        const base = { name: f.name, path: f.path, category: f.category, size: f.size };
+        const x = await ctx.helpers.extractTextContent(f);
+        files.push(x?.content ? { ...base, content: x.content.slice(0, 8000), contentTruncated: !!x.truncated } : base);
+      }
+    }
+    const res = await fetch(`${ctx.backendUrl}/api/ai/task`, {
+      method: "POST", signal: ctx.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task, folderName: ctx.folderName, summary: ctx.summary, files, iterations: 1 }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Agent failed (${res.status})`); }
+    const data = await res.json();
+    return { output: { answer: data.answer }, preview: (data.answer || "").slice(0, 400) };
+  },
 };
 
 // ─── Main runner ───────────────────────────────────────────────────────────────
@@ -364,6 +391,7 @@ export async function runWorkflow(workflow, options = {}) {
   const g = buildRunGraph(workflow);
   const run = {
     id: `run-${Date.now()}`,
+    workflowId: workflow.id,
     workflowName: workflow.folderName || "Untitled",
     startedAt: new Date().toISOString(),
     finishedAt: null, durationMs: 0, status: "running", steps: [],
@@ -404,7 +432,8 @@ export async function runWorkflow(workflow, options = {}) {
 
     onNodeStatus?.(id, "running");
     const stepStart = Date.now();
-    const exec = EXECUTORS[node.toolId];
+    const exec = EXECUTORS[node.toolId]
+      || ((node.toolId?.startsWith("custom-") || node.config?.kind === "agent") ? EXECUTORS["custom-agent"] : undefined);
     let step;
     try {
       if (!exec) throw new Error(`No executor for "${node.toolId}"`);

@@ -21,8 +21,16 @@ A local-first, n8n-inspired visual workflow builder that connects to a folder on
 - **AI Workflow Copilot** — describe an automation in plain English ("scan this folder, summarize the PDFs,
   write a markdown report") and the selected AI model assembles a validated workflow (catalog nodes + edges)
   laid out on the canvas, ready to **Place & Run**. _(Requires the backend + a configured AI provider.)_
-- **Export** — download `local-agent-workflow.json` (n8n-inspired format).
-- **Agent tool palette** — searchable sidebar with Web Research Agent, HTTP/API Request, Document Extractor, Table/CSV Analyzer, Data Cleaner, Python Analysis Step, Chart Builder, Classifier/Tagger, Insight Summarizer, Report Writer, Manual Trigger, Schedule Trigger, and more.
+- **Custom agent tools** — define your own reusable AI agent node (name, role/system prompt, task, input scope).
+  Saved tools live in a **global library** in the palette (`+ New`), drag onto any canvas, edit by double-clicking
+  the placed node, and run through your configured AI model like any built-in tool.
+- **Import / Export** — round-trip a workflow as JSON (nodes, connections, variables, **and the custom tools it
+  uses**), so an exported file restores fully on re-import — on this machine or another. Import lives next to Export
+  in the sidebar.
+- **Session persistence** — your canvas auto-saves and is **restored on the next visit** (no more empty workspace
+  every day). Folders are remembered via IndexedDB: click **Reconnect "<folder>"** to re-grant access and repopulate
+  files in one click. Each run is logged per workflow — the Run console **History** filters by *This workflow* / *All*.
+- **Agent tool palette** — searchable sidebar with Web Research Agent, HTTP/API Request, Document Extractor, Table/CSV Analyzer, Data Cleaner, Python Analysis Step, Chart Builder, Classifier/Tagger, Insight Summarizer, Report Writer, Manual Trigger, Schedule Trigger, your custom agents, and more.
 
 ## Requirements
 
