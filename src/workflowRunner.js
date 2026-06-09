@@ -76,16 +76,40 @@ export function buildRunGraph(workflow) {
   return { nodes, edges: toolEdges, order, parents, folderSeeded, nodeMap: Object.fromEntries(nodes.map(n => [n.id, n])) };
 }
 
-// Dry-run: validate the graph and return the planned execution order (labels).
-// Used by the Simulate button.
+// Tools that read the connected folder's files — flagged if no folder is loaded.
+const FILE_DEPENDENT_TOOLS = new Set([
+  "document-extractor", "table-analyzer", "data-cleaner", "classifier",
+  "insight-summarizer", "chart-builder", "report-writer", "python-step",
+]);
+
+// Dry-run: validate the graph and return the planned execution order + warnings.
+// Used by the Simulate button (no nodes execute; no side effects).
 export function planRun(workflow) {
   const g = buildRunGraph(workflow);
-  if (!g.nodes.length) return { ok: false, reason: "No tool nodes on the canvas. Drag tools from the palette and connect them.", steps: [] };
-  return {
-    ok: true,
-    steps: g.order.map(id => g.nodeMap[id]).filter(Boolean).map(n => ({ id: n.id, label: n.label, toolId: n.toolId })),
-    edgeCount: g.edges.length,
-  };
+  if (!g.nodes.length) return { ok: false, reason: "No tool nodes on the canvas. Drag tools from the palette and connect them.", steps: [], warnings: [] };
+
+  const orderIndex = {};
+  g.order.forEach((id, i) => { orderIndex[id] = i + 1; });
+  const degree = {};
+  g.nodes.forEach(n => { degree[n.id] = 0; });
+  g.edges.forEach(e => { degree[e.from]++; degree[e.to]++; });
+  const noFiles = (workflow.files || []).length === 0;
+  const multi = g.nodes.length > 1;
+
+  const steps = g.order.map(id => g.nodeMap[id]).filter(Boolean).map(n => {
+    const warnings = [];
+    if (multi && degree[n.id] === 0) warnings.push("disconnected");
+    if (noFiles && FILE_DEPENDENT_TOOLS.has(n.toolId)) warnings.push("needs-files");
+    return { id: n.id, label: n.label, toolId: n.toolId, order: orderIndex[n.id], warnings };
+  });
+
+  const warnings = [];
+  if (!g.nodes.some(n => n.toolId.startsWith("trigger-"))) warnings.push("No trigger node — execution starts from root nodes.");
+  const disconnected = steps.filter(s => s.warnings.includes("disconnected")).map(s => s.label);
+  if (disconnected.length) warnings.push(`Not wired to other nodes: ${disconnected.join(", ")}.`);
+  if (steps.some(s => s.warnings.includes("needs-files"))) warnings.push("Folder not connected — file-reading nodes will have no input.");
+
+  return { ok: true, steps, edgeCount: g.edges.length, warnings };
 }
 
 // ─── Template interpolation: {{previousOutput.x}}, {{vars.k}}, {{folderName}} ──

@@ -1846,9 +1846,12 @@ function WorkflowNode({ data }) {
   const Icon = data.icon || Layers3;
   const [showFiles, setShowFiles] = useState(false);
   return (
-    <div className={`workflow-node tone-${data.tone||"default"}${data.drillable?" node-drillable":""}${data.runState?` node-run-${data.runState}`:""}`}
+    <div className={`workflow-node tone-${data.tone||"default"}${data.drillable?" node-drillable":""}${data.runState?` node-run-${data.runState}`:""}${data.simWarn?" node-sim-warn":""}`}
          onMouseEnter={()=>setShowFiles(true)} onMouseLeave={()=>setShowFiles(false)}>
       <Handle type="target" position={Position.Left} />
+      {data.simOrder != null && (
+        <span className="node-sim-order" title={data.simWarn ? data.simWarn.map(w => w==="needs-files"?"needs a connected folder":w==="disconnected"?"not wired to other nodes":w).join(", ") : `Step ${data.simOrder} in the planned run`}>{data.simOrder}</span>
+      )}
       <div className="node-heading">
         <span className="node-icon"><Icon size={18} strokeWidth={2.2} /></span>
         <span className="node-copy"><strong>{data.label}</strong><small>{data.subtitle}</small></span>
@@ -4975,6 +4978,7 @@ function App() {
   const [currentRun,    setCurrentRun]    = useState(null);  // live run record
   const [running,       setRunning]       = useState(false);
   const [showRunConsole, setShowRunConsole] = useState(false);
+  const [simPlan, setSimPlan] = useState(null); // dry-run overlay: { order:{localId:n}, warnNodes:{localId:[...]}, warnings:[] }
   const [runHistory, setRunHistory] = useState(() => {
     try { return JSON.parse(localStorage.getItem("las-run-history") || "[]"); } catch { return []; }
   });
@@ -5204,13 +5208,16 @@ function App() {
       if (n.type === "workflowHeader") return { ...n, data: { ...n.data, onRemove: removeWorkflow } };
       if (n.type === "workflowNode") {
         const data = { ...n.data, onFileOpen: handleFileOpen };
-        // Overlay live run status onto nodes of the active workflow.
+        // Overlay live run status (Run) or dry-run plan (Simulate) onto active-workflow nodes.
         if (data.workflowId === activeWorkflowId) {
           const localId = n.id.slice(data.workflowId.length + 1);
           const rs = nodeRunStatus[localId];
           if (rs) {
             data.runState = rs;
             data.status = { running:"Running", done:"Done", error:"Error", skipped:"Skipped" }[rs] || data.status;
+          } else if (simPlan) {
+            data.simOrder = simPlan.order[localId];
+            data.simWarn = simPlan.warnNodes[localId];
           }
         }
         return { ...n, data };
@@ -5222,7 +5229,7 @@ function App() {
       }};
       return n;
     }),
-    [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, nodeRunStatus, activeWorkflowId],
+    [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, nodeRunStatus, simPlan, activeWorkflowId],
   );
 
   // ── folder scanning ───────────────────────────────────────────────────────
@@ -5577,10 +5584,23 @@ function App() {
   // execution. Real execution happens in runActiveWorkflow below.
   const simulateRun = useCallback(() => {
     const plan = planRun({ ...activeWorkflow, variables: workflowVars });
-    if (!plan.ok) { setStatus({ type:"warning", text: plan.reason }); return; }
-    const order = plan.steps.map(s => s.label).join(" → ");
-    setStatus({ type:"info", text:`Dry run — ${plan.steps.length} node(s), ${plan.edgeCount} edge(s): ${order}` });
+    if (!plan.ok) { setStatus({ type:"warning", text: plan.reason }); setSimPlan(null); return; }
+    const order = {}, warnNodes = {};
+    plan.steps.forEach(s => { order[s.id] = s.order; if (s.warnings.length) warnNodes[s.id] = s.warnings; });
+    setSimPlan({ order, warnNodes, warnings: plan.warnings });
+    setShowRunConsole(false);
+    const seq = plan.steps.map(s => `${s.order}. ${s.label}`).join("  →  ");
+    setStatus({
+      type: plan.warnings.length ? "warning" : "info",
+      text: plan.warnings.length
+        ? `Dry run — ${plan.steps.length} node(s). ⚠ ${plan.warnings.join(" ")} · Order: ${seq}`
+        : `Dry run — ${plan.steps.length} node(s) would run in order: ${seq}`,
+    });
   }, [activeWorkflow, workflowVars]);
+
+  // A dry-run overlay is only valid for the current graph — clear it on edits / switch.
+  const graphSig = `${activeWorkflowId}:${activeWorkflow.customToolNodes.length}:${activeWorkflow.manualEdges.length}`;
+  useEffect(() => { setSimPlan(null); }, [graphSig]);
 
   const runActiveWorkflow = useCallback(async () => {
     if (running) return;
@@ -5592,6 +5612,7 @@ function App() {
     runAbortRef.current = controller;
     setRunning(true);
     setNodeRunStatus({});
+    setSimPlan(null);
     setShowRunConsole(true);
     setCurrentRun({ id:`run-${Date.now()}`, startedAt:new Date().toISOString(), status:"running", steps:[] });
     setStatus({ type:"info", text:`Running ${plan.steps.length} node(s)…` });
