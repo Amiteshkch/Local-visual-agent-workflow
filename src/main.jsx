@@ -5179,27 +5179,37 @@ function App() {
 
   // ── sticky note callbacks (must be before derivedNodes useMemo) ──────────
 
+  // Canvas node ids are prefixed `${wfId}|${localId}`; sticky handlers receive that
+  // prefixed id but customToolNodes use the local id — split before matching.
+  const splitNodeId = useCallback((nodeId) => {
+    const i = nodeId.indexOf("|");
+    return i >= 0 ? { wfId: nodeId.slice(0, i), localId: nodeId.slice(i + 1) } : { wfId: activeWorkflowId, localId: nodeId };
+  }, [activeWorkflowId]);
+
   const updateStickyText = useCallback((nodeId, text) => {
-    updateWorkflow(activeWorkflowId, w => ({
+    const { wfId, localId } = splitNodeId(nodeId);
+    updateWorkflow(wfId, w => ({
       customToolNodes: w.customToolNodes.map(n =>
-        n.id === nodeId ? { ...n, data: { ...n.data, text } } : n
+        n.id === localId ? { ...n, data: { ...n.data, text } } : n
       ),
     }));
-  }, [activeWorkflowId, updateWorkflow]);
+  }, [splitNodeId, updateWorkflow]);
 
   const updateStickyColor = useCallback((nodeId, colorIdx) => {
-    updateWorkflow(activeWorkflowId, w => ({
+    const { wfId, localId } = splitNodeId(nodeId);
+    updateWorkflow(wfId, w => ({
       customToolNodes: w.customToolNodes.map(n =>
-        n.id === nodeId ? { ...n, data: { ...n.data, colorIdx } } : n
+        n.id === localId ? { ...n, data: { ...n.data, colorIdx } } : n
       ),
     }));
-  }, [activeWorkflowId, updateWorkflow]);
+  }, [splitNodeId, updateWorkflow]);
 
   const deleteStickyNote = useCallback((nodeId) => {
-    updateWorkflow(activeWorkflowId, w => ({
-      customToolNodes: w.customToolNodes.filter(n => n.id !== nodeId),
+    const { wfId, localId } = splitNodeId(nodeId);
+    updateWorkflow(wfId, w => ({
+      customToolNodes: w.customToolNodes.filter(n => n.id !== localId),
     }));
-  }, [activeWorkflowId, updateWorkflow]);
+  }, [splitNodeId, updateWorkflow]);
 
   // ── inject callbacks into derived nodes ──────────────────────────────────
 
@@ -5249,7 +5259,9 @@ function App() {
         ? addWorkflow({ folderName:handle.name, files:collected })
         : (updateWorkflow(id, { folderName:handle.name, files:collected, runState:"idle" }), id);
       // Remember the folder so it can be reconnected next session without a fresh pick.
+      // Keyed by workflow id and by name (name is the fallback if ids drift).
       idbSet(`folder:${wfId}`, handle).catch(() => {});
+      idbSet(`folderName:${handle.name}`, handle).catch(() => {});
       setStatus({ type:"success", text:`Loaded ${collected.length} files from "${handle.name}".` });
     } catch(err) {
       if (err?.name!=="AbortError") setStatus({ type:"error", text:`Could not read folder: ${err?.message}` });
@@ -5260,19 +5272,32 @@ function App() {
   // Re-grant access to a previously connected folder (handle stored in IndexedDB)
   // and re-scan it — so a restored session can repopulate its files in one click.
   const reconnectFolder = useCallback(async () => {
+    const name = activeWorkflow.folderName;
+    let handle = null;
+    try { handle = await idbGet(`folder:${activeWorkflowId}`); } catch {}
+    if (!handle && name) { try { handle = await idbGet(`folderName:${name}`); } catch {} }
+    // No saved handle (connected before handles were tracked, or via a browser
+    // without the directory picker) — just re-open the picker, which saves it for next time.
+    if (!handle) {
+      setStatus({ type:"info", text:`No saved handle for "${name}" — pick the folder again to reconnect.` });
+      connectWithDirectoryPicker();
+      return;
+    }
     try {
-      const handle = await idbGet(`folder:${activeWorkflowId}`);
-      if (!handle) { setStatus({ type:"warning", text:"No saved folder for this workflow — use Connect local folder." }); return; }
-      const perm = await handle.requestPermission?.({ mode:"read" });
-      if (perm && perm !== "granted") { setStatus({ type:"warning", text:"Folder permission was not granted." }); return; }
+      if (handle.queryPermission) {
+        let perm = await handle.queryPermission({ mode:"read" });
+        if (perm !== "granted") perm = await handle.requestPermission({ mode:"read" });
+        if (perm !== "granted") { setStatus({ type:"warning", text:"Folder permission was not granted." }); return; }
+      }
       setStatus({ type:"info", text:`Reconnecting "${handle.name}"…` });
       const collected = await scanFolderHandle(handle);
       updateWorkflow(activeWorkflowId, { folderName:handle.name, files:collected, runState:"idle" });
+      idbSet(`folder:${activeWorkflowId}`, handle).catch(() => {});
       setStatus({ type:"success", text:`Reconnected "${handle.name}" — ${collected.length} files.` });
     } catch (err) {
       setStatus({ type:"error", text:`Reconnect failed: ${err?.message}` });
     }
-  }, [activeWorkflowId, updateWorkflow]);
+  }, [activeWorkflowId, activeWorkflow.folderName, updateWorkflow, connectWithDirectoryPicker]);
 
   const handleFallbackFiles = useCallback(e => {
     const selected = normalizeDirectoryFiles(e.target.files||[]);
