@@ -92,6 +92,30 @@ npm run build   # outputs to dist/
 npm run preview # serve the built output locally
 ```
 
+## MCP server (drive the builder from Claude Code / Cursor)
+
+The workflow engine ships an MCP server so an AI client can search nodes and
+create, validate, run, and manage workflows — sharing the same workflow store as
+the studio/dashboard.
+
+```bash
+cd Workflow_builder/workflow-engine
+npm install        # installs @modelcontextprotocol/sdk
+npm run mcp        # stdio MCP server
+
+# Wire into Claude Code:
+claude mcp add local-agent-studio -- node /ABSOLUTE/PATH/Workflow_builder/workflow-engine/mcp-server.mjs
+```
+
+**Tools:** `search_nodes`, `list_workflows`, `get_workflow`, `create_workflow`
+(`{name, nodes:[{toolId,label?,config?}], edges:[[fromIdx,toIdx]]}`),
+`validate_workflow`, `run_workflow`, `delete_workflow`.
+
+Runs execute the **server-capable** node subset (triggers, HTTP, If-Else, Filter,
+Merge, Wait, Set-Variable, Text-Formatter, Code, Web-Research, Claude AI,
+Output). Browser-only nodes (PDF/DOCX/CSV parsing, Pyodide Python, charting) are
+validated and **skipped** server-side — run those in the studio for full output.
+
 ## Privacy
 
 - Folder access is permission-gated by the browser's File System Access API.
