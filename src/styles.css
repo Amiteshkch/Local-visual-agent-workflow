@@ -5055,3 +5055,9 @@ h1 {
 .sim-help { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: #f0ebe4; }
 .sim-help p { margin: 0 0 6px; font-size: 12px; line-height: 1.5; color: var(--ink); }
 .sim-help p:last-child { margin-bottom: 0; }
+
+/* ── per-node config form ─────────────────────────────────────────────────── */
+.node-config-form { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
+.node-config-field { display: flex; flex-direction: column; gap: 5px; }
+.node-config-field > span { font-size: 11px; font-weight: 700; color: var(--muted); }
+.node-config-field .copilot-input, .node-config-field .tool-method-select { width: 100%; }

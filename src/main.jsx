@@ -4226,6 +4226,44 @@ function APIRequestPanel({ workflow, onClose }) {
   );
 }
 
+// ─── Per-node configuration ───────────────────────────────────────────────────
+// Config the Run engine reads from node.data.config for logic/transform/AI nodes.
+const NODE_CONFIG_SCHEMA = {
+  "if-else":       { title:"If / Else",        icon: GitBranch, fields:[ { key:"condition", label:"Condition — JS using previousOutput & vars", type:"textarea", placeholder:"previousOutput.status < 300" } ] },
+  "filter":        { title:"Filter",           icon: Filter,    fields:[ { key:"condition", label:"Keep going if — JS expression", type:"textarea", placeholder:"previousOutput.files.length > 0" } ] },
+  "set-variable":  { title:"Set Variable",     icon: Variable,  fields:[ { key:"key", label:"Variable name", type:"text", placeholder:"myKey" }, { key:"value", label:"Value — supports {{previousOutput}}, {{vars.x}}", type:"textarea" } ] },
+  "text-formatter":{ title:"Text Formatter",   icon: FileText,  fields:[ { key:"op", label:"Operation", type:"select", options:["trim","upper","lower","replace"] }, { key:"find", label:"Find (for replace)", type:"text" }, { key:"replace", label:"Replace with", type:"text" } ] },
+  "code-js":       { title:"Code (JavaScript)",icon: Code2,     fields:[ { key:"code", label:"JS body — receives previousOutput, vars; return a value", type:"textarea", placeholder:"return previousOutput;" } ] },
+  "wait":          { title:"Wait / Delay",     icon: Clock,     fields:[ { key:"seconds", label:"Delay seconds (max 300)", type:"number", placeholder:"5" } ] },
+  "claude-ai":     { title:"Claude AI",        icon: Bot,       fields:[ { key:"prompt", label:"Prompt — the previous node's output is appended", type:"textarea", placeholder:"Summarize the data and suggest the next step." } ] },
+};
+
+function NodeConfigPanel({ toolId, initial, onSave, onClose }) {
+  const schema = NODE_CONFIG_SCHEMA[toolId];
+  const [cfg, setCfg] = useState(initial || {});
+  if (!schema) return null;
+  const set = (k, v) => setCfg(c => ({ ...c, [k]: v }));
+  const Icon = schema.icon || SlidersHorizontal;
+  return (
+    <ToolShell title={`${schema.title} — settings`} IconComponent={Icon} onClose={onClose}
+      headerRight={<button className="tool-hbtn" onClick={() => { onSave(cfg); onClose(); }}>Save</button>}>
+      <div className="node-config-form">
+        {schema.fields.map(f => (
+          <label key={f.key} className="node-config-field">
+            <span>{f.label}</span>
+            {f.type === "textarea"
+              ? <textarea className="copilot-input" rows={3} value={cfg[f.key] || ""} onChange={e => set(f.key, e.target.value)} placeholder={f.placeholder} />
+              : f.type === "select"
+                ? <select className="tool-method-select" value={cfg[f.key] || f.options[0]} onChange={e => set(f.key, e.target.value)}>{f.options.map(o => <option key={o}>{o}</option>)}</select>
+                : <input className="copilot-input" style={{ height:38, minHeight:0 }} type={f.type === "number" ? "number" : "text"} value={cfg[f.key] ?? ""} onChange={e => set(f.key, e.target.value)} placeholder={f.placeholder} />}
+          </label>
+        ))}
+        <p className="tool-hint">Saved to this node — used when you Run the workflow.</p>
+      </div>
+    </ToolShell>
+  );
+}
+
 // ─── Tool panel dispatcher ────────────────────────────────────────────────────
 
 function ToolPanel({ toolId, workflow, onClose }) {
@@ -5057,6 +5095,7 @@ function App() {
   const [localAgentPanel, setLocalAgentPanel] = useState(null);
   const [ideOpener,   setIdeOpener]           = useState(null);
   const [toolPanel,   setToolPanel]           = useState(null);
+  const [nodeConfigPanel, setNodeConfigPanel] = useState(null); // { nodeId, toolId, initial }
   const [showTemplates,  setShowTemplates]  = useState(false);
   const [showPalette,    setShowPalette]    = useState(false);
   const [showAIProvider, setShowAIProvider] = useState(false);
@@ -5322,6 +5361,15 @@ function App() {
     setStatus({ type:"info", text:"Removed tool node." });
   }, [splitNodeId, updateWorkflow]);
 
+  const saveNodeConfig = useCallback((nodeId, config) => {
+    const { wfId, localId } = splitNodeId(nodeId);
+    updateWorkflow(wfId, w => ({
+      customToolNodes: w.customToolNodes.map(n =>
+        n.id === localId ? { ...n, data: { ...n.data, config: { ...n.data.config, ...config } } } : n),
+    }));
+    setStatus({ type:"success", text:"Saved node settings." });
+  }, [splitNodeId, updateWorkflow]);
+
   // Persist edge/node deletions done on the canvas (select + Delete/Backspace).
   const handleDeleteEdges = useCallback((deleted) => {
     for (const e of deleted) {
@@ -5528,6 +5576,12 @@ function App() {
     if (toolId?.startsWith("custom-") || node.data?.config?.kind === "agent") {
       const localId = node.id.includes("|") ? node.id.slice(node.id.indexOf("|") + 1) : node.id;
       setCustomBuilder({ mode:"editNode", nodeId: localId, def: { id: toolId, label: node.data?.label, config: node.data?.config } });
+      return;
+    }
+
+    // Logic / transform / AI nodes with editable settings
+    if (toolId && NODE_CONFIG_SCHEMA[toolId]) {
+      setNodeConfigPanel({ nodeId: node.id, toolId, initial: node.data?.config || {} });
       return;
     }
 
@@ -6128,6 +6182,15 @@ function App() {
             toolId={toolPanel.toolId}
             workflow={workflowList.find(w => w.id === toolPanel.workflowId) ?? activeWorkflow}
             onClose={() => setToolPanel(null)}
+          />
+        )}
+
+        {nodeConfigPanel && (
+          <NodeConfigPanel
+            toolId={nodeConfigPanel.toolId}
+            initial={nodeConfigPanel.initial}
+            onSave={(cfg) => saveNodeConfig(nodeConfigPanel.nodeId, cfg)}
+            onClose={() => setNodeConfigPanel(null)}
           />
         )}
 
