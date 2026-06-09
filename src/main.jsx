@@ -5963,11 +5963,17 @@ function App() {
       customTools: customTools.filter(t => usedIds.has(t.id)),
       workflow: serializeWorkflow({ ...activeWorkflow, variables: workflowVars }),
     };
+    const nodeCount = payload.workflow.customToolNodes.length;
+    if (!nodeCount) { setStatus({ type:"warning", text:"Nothing to export — add some tool nodes first." }); return; }
     const blob = new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
     const url  = URL.createObjectURL(blob);
-    Object.assign(document.createElement("a"),{href:url,download:`${activeWorkflow.folderName||"local-agent"}-workflow.json`}).click();
-    URL.revokeObjectURL(url);
-    setStatus({ type:"success", text:"Exported workflow JSON (nodes, connections, custom tools)." });
+    // Anchor must be in the DOM for the download to fire in Safari/Firefox.
+    const a = Object.assign(document.createElement("a"), { href:url, download:`${activeWorkflow.folderName||"local-agent"}-workflow.json` });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus({ type:"success", text:`Exported ${nodeCount} node(s) + ${payload.workflow.manualEdges.length} connection(s) to JSON.` });
   }, [activeWorkflow, workflowVars, customTools]);
 
   // ── derived UI data ───────────────────────────────────────────────────────
