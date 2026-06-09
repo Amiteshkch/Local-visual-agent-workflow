@@ -5743,15 +5743,6 @@ function App() {
           )}
           <input ref={fallbackInputRef} className="visually-hidden" type="file" webkitdirectory="" directory="" multiple onChange={handleFallbackFiles}/>
 
-          {running
-            ? <button className="button primary sidebar-run sidebar-run--cancel" type="button" onClick={cancelRun}>
-                <XCircle size={17}/> Cancel run
-              </button>
-            : <button className="button primary sidebar-run" type="button" onClick={runActiveWorkflow}
-                      disabled={!activeWorkflow.customToolNodes.length}>
-                <Zap size={17}/> Run workflow
-              </button>}
-
           <div className="sidebar-action-grid">
             <button className="button secondary copilot-btn" type="button" onClick={() => { setShowCopilot(true); setCopilotState(null); }}>
               <Sparkles size={15}/> Copilot

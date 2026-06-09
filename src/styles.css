@@ -4890,10 +4890,7 @@ h1 {
 .ai-prov-save:disabled { opacity:.5; cursor:not-allowed; }
 .ai-prov-save.saved { background:#16a34a; }
 
-/* ── Run button + Copilot button (sidebar) ────────────────────────────────── */
-.sidebar-run { width: 100%; }
-.sidebar-run--cancel { background: var(--orange-dark); color: #fff; }
-.sidebar-run--cancel:hover { background: #c94d1c; }
+/* ── Copilot button (sidebar) ─────────────────────────────────────────────── */
 .copilot-btn { color: #fff; background: linear-gradient(135deg, var(--plum), #5e4a73) !important; border-color: transparent !important; }
 .copilot-btn:hover { filter: brightness(1.08); }
 
