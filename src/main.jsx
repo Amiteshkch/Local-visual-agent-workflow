@@ -25,12 +25,13 @@ import {
   Activity, AlertTriangle, Archive, BarChart3, Bot, BrainCircuit, Braces, CheckCircle2,
   ChevronDown, ChevronRight, ChevronUp, ClipboardList, Clock, Code2, Copy, Database,
   Download, FileImage, FileSearch, FileText, Filter, FolderOpen, GitBranch, GitMerge,
-  Globe2, HardDrive, Info, Layers3, Link, LockKeyhole, MessageSquareText, PanelLeftClose,
+  Globe2, HardDrive, Info, Layers3, Link, LockKeyhole, Maximize2, MessageSquareText, Minus, PanelLeftClose,
   PanelLeftOpen, Pencil, Play, Plus, RefreshCw, Search, Settings, ShieldCheck,
   SlidersHorizontal, Sparkles, StickyNote, Table2, Tag, Trash2, Upload, Variable,
   Webhook, XCircle, Zap,
 } from "lucide-react";
 import "./styles.css";
+import { runWorkflow as runWorkflowEngine, planRun, buildRunGraph } from "./workflowRunner.js";
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -699,6 +700,7 @@ function LocalAgentPanel({ workflow, onClose, onRunComplete, onOpenOutput }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
   const [result, setResult] = useState(null);
+  const [minimized, setMinimized] = useState(false);   // collapse to a small bar while keeping the run alive
   const [elapsedMs, setElapsedMs] = useState(0);
   // Live SSE progress:
   //   totalAgents, totalPasses, completedPasses, currentAgent, currentPass, currentTitle, lines[]
@@ -1020,6 +1022,24 @@ ${agent.answer}`)
     }
   }, [task, agentTeam, includeFiles, iterations, files, selected, workflow?.folderName, summary, onRunComplete, onOpenOutput]);
 
+  // Minimized: collapse to a small floating bar so the canvas is fully usable.
+  // The component stays mounted, so an in-progress task keeps running.
+  if (minimized) {
+    const miniStatus = busy
+      ? (progress?.currentAgent ? `${progress.currentAgent}${progress.currentPass > 0 ? ` · pass ${progress.currentPass}` : ""}` : "Running…")
+      : result ? "Done" : "Ready";
+    return (
+      <div className={`local-agent-mini${busy ? " local-agent-mini--busy" : ""}`}
+           onClick={() => setMinimized(false)} title="Restore Local AI Agent">
+        <Bot size={15} />
+        <span className="lam-title">Local AI Agent</span>
+        <span className="lam-status">{busy && <span className="lalc-spinner">⟳</span>}{miniStatus}</span>
+        <button className="lam-btn" onClick={e => { e.stopPropagation(); setMinimized(false); }} title="Maximize"><Maximize2 size={13} /></button>
+        <button className="lam-btn" onClick={e => { e.stopPropagation(); onClose(); }} title="Close">✕</button>
+      </div>
+    );
+  }
+
   return (
     <div className="local-agent-panel">
       <div className="local-agent-header">
@@ -1088,6 +1108,7 @@ ${agent.answer}`)
             ? <button className="local-agent-stop" onClick={stopTask} title="Cancel the running task">■ Stop</button>
             : <button className="local-agent-run" onClick={runTask} disabled={!task.trim() && agentTeam.every(agent => !agent.task.trim())}>Run task</button>
           }
+          <button className="py-close-btn" onClick={() => setMinimized(true)} title="Minimize"><Minus size={15} /></button>
           <button className="py-close-btn" onClick={onClose} title="Close">x</button>
         </div>
       </div>
@@ -1824,13 +1845,13 @@ function WorkflowNode({ data }) {
   const Icon = data.icon || Layers3;
   const [showFiles, setShowFiles] = useState(false);
   return (
-    <div className={`workflow-node tone-${data.tone||"default"}${data.drillable?" node-drillable":""}`}
+    <div className={`workflow-node tone-${data.tone||"default"}${data.drillable?" node-drillable":""}${data.runState?` node-run-${data.runState}`:""}`}
          onMouseEnter={()=>setShowFiles(true)} onMouseLeave={()=>setShowFiles(false)}>
       <Handle type="target" position={Position.Left} />
       <div className="node-heading">
         <span className="node-icon"><Icon size={18} strokeWidth={2.2} /></span>
         <span className="node-copy"><strong>{data.label}</strong><small>{data.subtitle}</small></span>
-        <span className="node-status">{data.status}</span>
+        <span className={`node-status${data.runState?` node-status--${data.runState}`:""}`}>{data.status}</span>
       </div>
       {Boolean(data.metrics?.length) && (
         <div className="node-metrics">
@@ -2480,6 +2501,156 @@ function AISuggestPanel({ result, onAddTool, onClose }) {
               ))}
             </div>
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── AI Workflow Copilot overlay ──────────────────────────────────────────────
+
+const COPILOT_EXAMPLES = [
+  "Scan this folder, summarize the PDFs, and write a markdown report",
+  "Profile every CSV, flag data-quality issues, then chart the cleaned data",
+  "Classify all files by type and produce an insight summary",
+];
+
+function CopilotPanel({ state, onBuild, onPlace, onClose }) {
+  const [goal, setGoal] = useState("");
+  const spec = state?.spec;
+  return (
+    <div className="ai-overlay" onClick={onClose}>
+      <div className="ai-panel copilot-panel" onClick={e => e.stopPropagation()}>
+        <div className="ai-panel-header">
+          <span><Sparkles size={15}/> AI Workflow Copilot</span>
+          <button className="ai-close-btn" onClick={onClose}>✕</button>
+        </div>
+
+        <p className="copilot-intro">Describe the automation you want. The configured AI model will assemble a workflow from the tool catalog, ready to place and run.</p>
+        <textarea
+          className="copilot-input"
+          rows={3}
+          value={goal}
+          onChange={e => setGoal(e.target.value)}
+          placeholder="e.g. Scan this folder, summarize the PDFs, and write a markdown report"
+          onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onBuild(goal); }}
+        />
+        <div className="copilot-examples">
+          {COPILOT_EXAMPLES.map(ex => (
+            <button key={ex} className="copilot-chip" onClick={() => setGoal(ex)}>{ex}</button>
+          ))}
+        </div>
+        <button className="button primary copilot-build" disabled={!goal.trim() || state?.loading} onClick={() => onBuild(goal)}>
+          {state?.loading ? <><RefreshCw size={15}/> Building…</> : <><Zap size={15}/> Build workflow</>}
+        </button>
+
+        {state?.error && (
+          <div className="ai-error"><p>{state.error}</p>{state.hint && <p className="ai-hint">{state.hint}</p>}</div>
+        )}
+
+        {spec && (
+          <div className="copilot-result">
+            <div className="copilot-result-head">
+              <strong>{spec.name}</strong>
+              <span className="copilot-meta">{spec.nodes.length} nodes · {spec.edges.length} connections{spec.fallback ? " · template fallback" : spec.provider ? ` · ${spec.provider}` : ""}</span>
+            </div>
+            <ol className="copilot-steps">
+              {spec.nodes.map((n, i) => (
+                <li key={i} className="copilot-step">
+                  <span className="copilot-step-num">{i + 1}</span>
+                  <span className="copilot-step-name">{n.tool.label}</span>
+                  <span className="copilot-step-cat">{n.tool.category}</span>
+                </li>
+              ))}
+            </ol>
+            <div className="copilot-actions">
+              <button className="button secondary" onClick={() => onPlace(spec, { run: false })}>Place on canvas</button>
+              <button className="button primary" onClick={() => onPlace(spec, { run: true })}><Zap size={15}/> Place &amp; Run</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Run console (live execution + history) ────────────────────────────────────
+
+const RUN_DOT = { running:"running", done:"done", error:"error", skipped:"skipped", success:"done", partial:"error", aborted:"skipped" };
+
+function RunStep({ step }) {
+  const [open, setOpen] = useState(false);
+  const hasDetail = step.preview || step.error || step.output != null;
+  return (
+    <div className={`run-step run-step--${step.status}`}>
+      <div className="run-step-head" onClick={() => hasDetail && setOpen(o => !o)}>
+        <span className={`run-dot run-dot--${RUN_DOT[step.status] || "idle"}`} />
+        <span className="run-step-label">{step.label}</span>
+        {step.branch && <span className="run-step-branch">{step.branch}</span>}
+        <span className="run-step-dur">{step.durationMs != null ? `${step.durationMs}ms` : ""}</span>
+        {hasDetail && (open ? <ChevronUp size={13}/> : <ChevronDown size={13}/>)}
+      </div>
+      {open && (
+        <div className="run-step-detail">
+          {step.error
+            ? <pre className="run-step-err">{step.error}</pre>
+            : <pre className="run-step-out">{step.preview || (typeof step.output === "string" ? step.output : JSON.stringify(step.output, null, 2))}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunConsole({ currentRun, running, history, onClose, onClearHistory }) {
+  const [tab, setTab] = useState("current");
+  const [openRun, setOpenRun] = useState(null);
+  const run = currentRun;
+  return (
+    <div className="run-console">
+      <div className="run-console-head">
+        <span className="run-console-title">
+          {running ? <><RefreshCw size={14} className="run-spin"/> Running…</> : <><Activity size={14}/> Run console</>}
+        </span>
+        <div className="run-console-tabs">
+          <button className={`run-tab${tab === "current" ? " active" : ""}`} onClick={() => setTab("current")}>Current</button>
+          <button className={`run-tab${tab === "history" ? " active" : ""}`} onClick={() => setTab("history")}>History ({history.length})</button>
+        </div>
+        <button className="run-console-close" onClick={onClose} title="Close">✕</button>
+      </div>
+
+      <div className="run-console-body">
+        {tab === "current" && (
+          !run ? <div className="run-empty">Press <strong>Run</strong> to execute the workflow. Each node reports its status and output here.</div> : (
+            <>
+              <div className={`run-summary run-summary--${run.status}`}>
+                <span className={`run-dot run-dot--${RUN_DOT[run.status] || "running"}`} />
+                <span className="run-summary-status">{run.status}</span>
+                {run.durationMs != null && <span className="run-summary-meta">{(run.durationMs / 1000).toFixed(1)}s</span>}
+                <span className="run-summary-meta">{run.steps.length} step(s)</span>
+              </div>
+              {run.status === "empty" && <div className="run-empty">No tool nodes on the canvas. Add tools and connect them, or use Copilot.</div>}
+              <div className="run-steps">{run.steps.map((s, i) => <RunStep key={i} step={s} />)}</div>
+            </>
+          )
+        )}
+        {tab === "history" && (
+          !history.length ? <div className="run-empty">No runs yet.</div> : (
+            <>
+              <div className="run-history-actions"><button className="run-tab" onClick={onClearHistory}>Clear history</button></div>
+              {history.map((h, i) => (
+                <div key={h.id || i} className={`run-hist-row run-hist-row--${h.status}`}>
+                  <div className="run-step-head" onClick={() => setOpenRun(openRun === i ? null : i)}>
+                    <span className={`run-dot run-dot--${RUN_DOT[h.status] || "idle"}`} />
+                    <span className="run-step-label">{h.workflowName || "Workflow"}</span>
+                    <span className="run-step-dur">{h.durationMs != null ? `${(h.durationMs / 1000).toFixed(1)}s` : ""}</span>
+                    <span className="run-hist-time">{new Date(h.startedAt).toLocaleTimeString()}</span>
+                    {openRun === i ? <ChevronUp size={13}/> : <ChevronDown size={13}/>}
+                  </div>
+                  {openRun === i && <div className="run-steps">{(h.steps || []).map((s, j) => <RunStep key={j} step={s} />)}</div>}
+                </div>
+              ))}
+            </>
+          )
         )}
       </div>
     </div>
@@ -3726,8 +3897,26 @@ ${fileList}${s.fileCount > 100 ? `\n\n_...and ${s.fileCount - 100} more files._`
 
 // ─── Web Research Agent panel ─────────────────────────────────────────────────
 
+const RESEARCH_DOC_EXTS = new Set([".pdf", ".docx", ".doc", ".txt", ".md"]);
+
+// Build a search query from the most salient terms in some text (same keyword
+// approach as the Insight Summarizer), so research targets the file's content.
+function keywordsFromText(text, n = 6) {
+  const words = (text || "").toLowerCase().match(/\b[a-z][a-z-]{3,}\b/g) || [];
+  const freq = {};
+  for (const w of words) if (!STOP_WORDS.has(w)) freq[w] = (freq[w] || 0) + 1;
+  return Object.entries(freq).sort(([, a], [, b]) => b - a).slice(0, n).map(([w]) => w);
+}
+
 function WebResearchPanel({ workflow, onClose }) {
-  const [query, setQuery] = useState(() => workflow?.folderName || "");
+  const docFiles = useMemo(
+    () => (workflow?.files ?? []).filter(f => RESEARCH_DOC_EXTS.has(extensionOf(f.name))),
+    [workflow?.files],
+  );
+  const [scope, setScope]   = useState("all");          // "all" | file.path
+  const [query, setQuery]   = useState("");
+  const [deriving, setDeriving] = useState(false);
+  const [derivedFrom, setDerivedFrom] = useState(null); // description of what the query came from
   const searches = [
     { label: "Google Scholar", url: (q) => `https://scholar.google.com/scholar?q=${encodeURIComponent(q)}` },
     { label: "arXiv",          url: (q) => `https://arxiv.org/search/?query=${encodeURIComponent(q)}&searchtype=all` },
@@ -3736,23 +3925,68 @@ function WebResearchPanel({ workflow, onClose }) {
     { label: "PubMed",         url: (q) => `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(q)}` },
   ];
 
+  // Read the actual file content and turn its key terms into the query.
+  const deriveQuery = useCallback(async () => {
+    const targets = scope === "all" ? docFiles.slice(0, 8) : docFiles.filter(f => f.path === scope);
+    if (!targets.length) { setQuery(workflow?.folderName || ""); setDerivedFrom(null); return; }
+    setDeriving(true);
+    try {
+      let allText = "";
+      for (const f of targets) {
+        const x = await extractTextContent(f);
+        if (x?.content) allText += " " + x.content;
+      }
+      const top = keywordsFromText(allText, 6);
+      setQuery(top.length ? top.join(" ") : (workflow?.folderName || ""));
+      setDerivedFrom(top.length
+        ? (scope === "all" ? `content of ${targets.length} document${targets.length !== 1 ? "s" : ""}` : `content of "${targets[0].name}"`)
+        : null);
+    } finally {
+      setDeriving(false);
+    }
+  }, [scope, docFiles, workflow?.folderName]);
+
+  // Auto-derive from content on open and whenever the source changes.
+  useEffect(() => { deriveQuery(); }, [deriveQuery]);
+
   return (
     <ToolShell title="Web Research Agent" IconComponent={Globe2} onClose={onClose}>
-      <div className="tool-section-head">Search query</div>
+      <div className="tool-section-head">Research source</div>
       <div className="tool-search-row">
-        <input className="tool-query-input" value={query} onChange={e => setQuery(e.target.value)}
-               placeholder="Enter a research topic or keyword…" onKeyDown={e => e.key === "Enter" && searches[0].url && window.open(searches[0].url(query))} />
+        <select className="tool-method-select" style={{ flex: 1 }} value={scope} onChange={e => setScope(e.target.value)} disabled={!docFiles.length}>
+          <option value="all">All documents ({docFiles.length})</option>
+          {docFiles.slice(0, 200).map(f => <option key={f.path} value={f.path}>{f.name}</option>)}
+        </select>
+        <button className="tool-search-btn" onClick={deriveQuery} disabled={deriving || !docFiles.length} title="Re-read the content and rebuild the query">
+          {deriving ? "Reading…" : "↻ From content"}
+        </button>
       </div>
+
+      <div className="tool-section-head" style={{marginTop:12}}>Search query</div>
+      <div className="tool-search-row">
+        <input className="tool-query-input" value={query} onChange={e => { setQuery(e.target.value); setDerivedFrom("your edit"); }}
+               placeholder={deriving ? "Reading file content…" : "Enter a research topic or keyword…"}
+               onKeyDown={e => e.key === "Enter" && query.trim() && window.open(searches[0].url(query.trim()), "_blank")} />
+      </div>
+
       <div className="tool-section-head" style={{marginTop:12}}>Open search in new tab</div>
       <div className="tool-search-btns">
         {searches.map(s => (
-          <button key={s.label} className="tool-search-btn" disabled={!query.trim()}
+          <button key={s.label} className="tool-search-btn" disabled={!query.trim() || deriving}
                   onClick={() => window.open(s.url(query.trim()), "_blank")}>
             {s.label}
           </button>
         ))}
       </div>
-      <p className="tool-hint" style={{marginTop:12}}>Pre-filled with the folder name. Edit the query to refine your search.</p>
+      <p className="tool-hint" style={{marginTop:12}}>
+        {!docFiles.length
+          ? "No readable documents in this folder — type a topic to search."
+          : derivedFrom === "your edit"
+            ? "Using your edited query."
+            : derivedFrom
+              ? `Query built from the ${derivedFrom} (not the file name). Edit it or pick a single file above to refine.`
+              : "Pick a source above to build a query from its content."}
+      </p>
     </ToolShell>
   );
 }
@@ -4596,6 +4830,20 @@ function App() {
   const [lastPythonOutput, setLastPythonOutput] = useState({});
   const [outputDisplayPanel, setOutputDisplayPanel] = useState(null);
 
+  // ── workflow execution (Run engine) ───────────────────────────────────────
+  const [nodeRunStatus, setNodeRunStatus] = useState({});   // localNodeId → "running"|"done"|"error"|"skipped"
+  const [currentRun,    setCurrentRun]    = useState(null);  // live run record
+  const [running,       setRunning]       = useState(false);
+  const [showRunConsole, setShowRunConsole] = useState(false);
+  const [runHistory, setRunHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("las-run-history") || "[]"); } catch { return []; }
+  });
+  const runAbortRef = useRef(null);
+
+  // ── AI Workflow Copilot ────────────────────────────────────────────────────
+  const [showCopilot, setShowCopilot] = useState(false);
+  const [copilotState, setCopilotState] = useState(null); // { loading } | { error } | { spec }
+
   // ── resize handles ────────────────────────────────────────────────────────
   const [sidebarW,   sidebarResizeDown,  sidebarRef]  = useResizableEl("x", 240, 560);
   const [paletteH,   paletteResizeDown,  paletteRef]  = useResizableEl("y",  80, 520);
@@ -4794,7 +5042,19 @@ function App() {
   const derivedNodes = useMemo(() =>
     rawNodes.map(n => {
       if (n.type === "workflowHeader") return { ...n, data: { ...n.data, onRemove: removeWorkflow } };
-      if (n.type === "workflowNode")   return { ...n, data: { ...n.data, onFileOpen: handleFileOpen } };
+      if (n.type === "workflowNode") {
+        const data = { ...n.data, onFileOpen: handleFileOpen };
+        // Overlay live run status onto nodes of the active workflow.
+        if (data.workflowId === activeWorkflowId) {
+          const localId = n.id.slice(data.workflowId.length + 1);
+          const rs = nodeRunStatus[localId];
+          if (rs) {
+            data.runState = rs;
+            data.status = { running:"Running", done:"Done", error:"Error", skipped:"Skipped" }[rs] || data.status;
+          }
+        }
+        return { ...n, data };
+      }
       if (n.type === "stickyNote")     return { ...n, data: { ...n.data,
         onTextChange:  updateStickyText,
         onColorChange: updateStickyColor,
@@ -4802,7 +5062,7 @@ function App() {
       }};
       return n;
     }),
-    [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote],
+    [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, nodeRunStatus, activeWorkflowId],
   );
 
   // ── folder scanning ───────────────────────────────────────────────────────
@@ -4858,6 +5118,34 @@ function App() {
       setAiSuggest({ error: `Cannot reach backend at ${BACKEND_URL}. Start the workflow engine:\n  cd workflow-engine && node server.js` });
     }
   }, [workflowSummary, activeWorkflow]);
+
+  // ── AI Workflow Copilot: describe a goal → AI returns a workflow spec ───────
+  const handleCopilotBuild = useCallback(async (goal) => {
+    if (!goal.trim()) return;
+    setCopilotState({ loading: true });
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/ai/build-workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goal,
+          folderName: activeWorkflow.folderName,
+          summary: workflowSummary,
+          files: activeWorkflow.files.slice(0, 30).map(({ name, category, size }) => ({ name, category, size })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setCopilotState({ error: data.error || "Request failed", hint: data.hint }); return; }
+      // Validate nodes against the catalog; keep only known toolIds.
+      const valid = (data.nodes || [])
+        .map(n => ({ ...n, tool: TOOL_CATALOG.find(t => t.id === n.toolId) }))
+        .filter(n => n.tool);
+      if (!valid.length) { setCopilotState({ error: "The model did not return any valid workflow nodes. Try rephrasing the goal." }); return; }
+      setCopilotState({ spec: { name: data.name || goal, nodes: valid, edges: data.edges || [], fallback: data.fallback, provider: data.provider } });
+    } catch {
+      setCopilotState({ error: `Cannot reach backend at ${BACKEND_URL}. Start it:\n  cd Workflow_builder/workflow-engine && node server.js` });
+    }
+  }, [activeWorkflow, workflowSummary]);
 
   // ── node interactions ─────────────────────────────────────────────────────
 
@@ -5062,17 +5350,81 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ── simulate / export ─────────────────────────────────────────────────────
+  // ── simulate (dry-run) / run / export ──────────────────────────────────────
 
+  // Simulate = validate the graph and show the planned topological order — no
+  // execution. Real execution happens in runActiveWorkflow below.
   const simulateRun = useCallback(() => {
-    if (!activeWorkflow.files.length) { setStatus({ type:"warning", text:"Connect a folder before simulating." }); return; }
-    updateWorkflow(activeWorkflowId, { runState:"running" });
-    setStatus({ type:"info", text:"Simulating…" });
-    window.setTimeout(() => {
-      updateWorkflow(activeWorkflowId, { runState:"complete" });
-      setStatus({ type:"success", text:`Simulation complete — ${activeWorkflow.files.length} files routed.` });
-    }, 900);
-  }, [activeWorkflow, activeWorkflowId, updateWorkflow]);
+    const plan = planRun({ ...activeWorkflow, variables: workflowVars });
+    if (!plan.ok) { setStatus({ type:"warning", text: plan.reason }); return; }
+    const order = plan.steps.map(s => s.label).join(" → ");
+    setStatus({ type:"info", text:`Dry run — ${plan.steps.length} node(s), ${plan.edgeCount} edge(s): ${order}` });
+  }, [activeWorkflow, workflowVars]);
+
+  const runActiveWorkflow = useCallback(async () => {
+    if (running) return;
+    const plan = planRun({ ...activeWorkflow, variables: workflowVars });
+    if (!plan.ok) { setStatus({ type:"warning", text: plan.reason }); return; }
+
+    const helpers = { extractTextContent, enrichFilesForPythonRun, runPythonBrowser, parseCSVText, csvStats, summarizeFiles, classifyFile };
+    const controller = new AbortController();
+    runAbortRef.current = controller;
+    setRunning(true);
+    setNodeRunStatus({});
+    setShowRunConsole(true);
+    setCurrentRun({ id:`run-${Date.now()}`, startedAt:new Date().toISOString(), status:"running", steps:[] });
+    setStatus({ type:"info", text:`Running ${plan.steps.length} node(s)…` });
+
+    try {
+      const run = await runWorkflowEngine({ ...activeWorkflow, variables: workflowVars }, {
+        backendUrl: BACKEND_URL,
+        helpers,
+        signal: controller.signal,
+        onNodeStatus: (id, st) => setNodeRunStatus(prev => ({ ...prev, [id]: st })),
+        onStep: (step) => setCurrentRun(prev => prev ? { ...prev, steps:[...prev.steps, step] } : prev),
+      });
+      setCurrentRun(run);
+      setRunHistory(prev => {
+        const next = [run, ...prev].slice(0, 25);
+        try { localStorage.setItem("las-run-history", JSON.stringify(next)); } catch {}
+        return next;
+      });
+      const ok = run.steps.filter(s => s.status === "done").length;
+      const failed = run.steps.filter(s => s.status === "error").length;
+      setStatus(run.status === "success"
+        ? { type:"success", text:`Run complete — ${ok} node(s) in ${(run.durationMs/1000).toFixed(1)}s.` }
+        : run.status === "aborted"
+          ? { type:"warning", text:"Run cancelled." }
+          : { type:"error", text:`Run finished with ${failed} error(s) — see the run console.` });
+    } catch (err) {
+      setStatus({ type:"error", text:`Run failed: ${err.message}` });
+    } finally {
+      setRunning(false);
+      runAbortRef.current = null;
+    }
+  }, [running, activeWorkflow, workflowVars]);
+
+  const cancelRun = useCallback(() => { runAbortRef.current?.abort(); }, []);
+
+  // Defined after runActiveWorkflow so the dependency reference is initialized.
+  const placeCopilotSpec = useCallback((spec, { run = false } = {}) => {
+    const toolNodes = spec.nodes.map((n, i) =>
+      createToolNode(n.tool, { x: 380 + i * 250, y: 470 + (i % 2) * 80 }, i + 1));
+    const edges = (spec.edges || [])
+      .filter(([a, b]) => toolNodes[a] && toolNodes[b] && a !== b)
+      .map(([a, b], i) => ({
+        id: `manual-${toolNodes[a].id}-${toolNodes[b].id}-${i}`,
+        source: toolNodes[a].id, target: toolNodes[b].id,
+        type: "smoothstep", animated: true,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+        style: { strokeWidth: 2.3 },
+      }));
+    updateWorkflow(activeWorkflowId, { customToolNodes: toolNodes, manualEdges: edges });
+    setShowCopilot(false);
+    setCopilotState(null);
+    setStatus({ type: "success", text: `Copilot built "${spec.name}" — ${toolNodes.length} nodes, ${edges.length} connections.` });
+    if (run) setTimeout(() => runActiveWorkflow(), 150);
+  }, [activeWorkflowId, updateWorkflow, runActiveWorkflow]);
 
   const exportWorkflow = useCallback(() => {
     const edits  = fileChanges[activeWorkflowId] || [];
@@ -5139,16 +5491,31 @@ function App() {
           </button>
           <input ref={fallbackInputRef} className="visually-hidden" type="file" webkitdirectory="" directory="" multiple onChange={handleFallbackFiles}/>
 
+          {running
+            ? <button className="button primary sidebar-run sidebar-run--cancel" type="button" onClick={cancelRun}>
+                <XCircle size={17}/> Cancel run
+              </button>
+            : <button className="button primary sidebar-run" type="button" onClick={runActiveWorkflow}
+                      disabled={!activeWorkflow.customToolNodes.length}>
+                <Zap size={17}/> Run workflow
+              </button>}
+
           <div className="sidebar-action-grid">
-            <button className="button secondary" type="button" onClick={() => setShowTemplates(true)}>
-              <Sparkles size={15}/> Template
+            <button className="button secondary copilot-btn" type="button" onClick={() => { setShowCopilot(true); setCopilotState(null); }}>
+              <Sparkles size={15}/> Copilot
             </button>
             <button className="button secondary ai-suggest-btn" type="button"
                     onClick={handleAISuggest} disabled={!activeWorkflow.files.length}>
               <Sparkles size={15}/> Suggest
             </button>
-            <button className="button secondary" type="button" onClick={simulateRun} disabled={!activeWorkflow.files.length}>
+            <button className="button secondary" type="button" onClick={() => setShowTemplates(true)}>
+              <Layers3 size={15}/> Template
+            </button>
+            <button className="button secondary" type="button" onClick={simulateRun} disabled={!activeWorkflow.customToolNodes.length}>
               <Play size={16}/> Simulate
+            </button>
+            <button className="button secondary" type="button" onClick={() => setShowRunConsole(v => !v)}>
+              <Activity size={16}/> Runs
             </button>
             <button className="button secondary" type="button" onClick={exportWorkflow} disabled={!activeWorkflow.files.length}>
               <Download size={16}/> Export
@@ -5235,6 +5602,15 @@ function App() {
             <Stat label="Total size" value={workflowSummary.totalSize}          icon={Database}/>
           </div>
           <div className="topbar-actions">
+            <button
+              className={`button primary topbar-run${running?" topbar-run--busy":""}`}
+              type="button"
+              onClick={running ? cancelRun : runActiveWorkflow}
+              disabled={!running && !activeWorkflow.customToolNodes.length}
+              title={running ? "Cancel the running workflow" : "Run this workflow"}
+            >
+              {running ? <><XCircle size={16}/> Cancel</> : <><Zap size={16}/> Run</>}
+            </button>
             <button
               className="button secondary exec-log-toggle"
               type="button"
@@ -5434,6 +5810,25 @@ function App() {
         <CommandPalette
           onAddTool={(tool) => { addToolToCanvas(tool); setStatus({ type:"success", text:`Added "${tool.label}".`}); }}
           onClose={() => setShowPalette(false)}
+        />
+      )}
+
+      {showCopilot && (
+        <CopilotPanel
+          state={copilotState}
+          onBuild={handleCopilotBuild}
+          onPlace={placeCopilotSpec}
+          onClose={() => { setShowCopilot(false); setCopilotState(null); }}
+        />
+      )}
+
+      {showRunConsole && (
+        <RunConsole
+          currentRun={currentRun}
+          running={running}
+          history={runHistory}
+          onClose={() => setShowRunConsole(false)}
+          onClearHistory={() => { setRunHistory([]); try { localStorage.removeItem("las-run-history"); } catch {} }}
         />
       )}
     </main>
