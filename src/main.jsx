@@ -1842,13 +1842,19 @@ function WorkflowHeaderNode({ data }) {
   );
 }
 
-function WorkflowNode({ data }) {
+function WorkflowNode({ data, id }) {
   const Icon = data.icon || Layers3;
   const [showFiles, setShowFiles] = useState(false);
   return (
     <div className={`workflow-node tone-${data.tone||"default"}${data.drillable?" node-drillable":""}${data.runState?` node-run-${data.runState}`:""}${data.simWarn?" node-sim-warn":""}`}
          onMouseEnter={()=>setShowFiles(true)} onMouseLeave={()=>setShowFiles(false)}>
       <Handle type="target" position={Position.Left} />
+      {data.custom && data.onDeleteNode && (
+        <button className="node-del" title="Remove this tool"
+                onMouseDown={e => { e.stopPropagation(); data.onDeleteNode(id); }}>
+          <XCircle size={14}/>
+        </button>
+      )}
       {data.simOrder != null && (
         <span className="node-sim-order" title={data.simWarn ? data.simWarn.map(w => w==="needs-files"?"needs a connected folder":w==="disconnected"?"not wired to other nodes":w).join(", ") : `Step ${data.simOrder} in the planned run`}>{data.simOrder}</span>
       )}
@@ -2475,12 +2481,19 @@ function ExecDashboard({ onClose }) {
 
 // ─── AI suggest overlay ───────────────────────────────────────────────────────
 
-function AISuggestPanel({ result, onAddTool, onClose }) {
+function AISuggestPanel({ result, onAddTool, onAddAll, onClose }) {
+  const [added, setAdded] = useState(() => new Set());
+  const suggestions = result.suggestions || [];
   return (
     <div className="ai-overlay" onClick={onClose}>
       <div className="ai-panel" onClick={e => e.stopPropagation()}>
         <div className="ai-panel-header">
           <span><Sparkles size={15}/> AI Workflow Suggestion</span>
+          {!result.loading && !result.error && suggestions.length > 0 && (
+            <button className="ai-addall-btn" onClick={() => onAddAll(suggestions)} title="Add every suggestion as a connected workflow">
+              <Zap size={13}/> Add all as workflow
+            </button>
+          )}
           <button className="ai-close-btn" onClick={onClose}>✕</button>
         </div>
         {result.loading && <div className="ai-loading"><RefreshCw size={16}/> Analysing your folder…</div>}
@@ -2494,16 +2507,18 @@ function AISuggestPanel({ result, onAddTool, onClose }) {
           <>
             {result.analysis && <p className="ai-analysis">{result.analysis}</p>}
             <div className="ai-suggestions">
-              {(result.suggestions || []).map((s, i) => (
+              {suggestions.map((s, i) => (
                 <div key={i} className="ai-suggestion-item">
                   <div className="ai-suggestion-name">{s.tool}</div>
                   <div className="ai-suggestion-reason">{s.reason}</div>
-                  <button className="ai-add-btn" onClick={() => onAddTool(s.toolId)}>
-                    + Add to canvas
+                  <button className={`ai-add-btn${added.has(i) ? " ai-add-btn--added" : ""}`}
+                          onClick={() => { onAddTool(s.toolId); setAdded(prev => new Set(prev).add(i)); }}>
+                    {added.has(i) ? "✓ Added — add again" : "+ Add & connect"}
                   </button>
                 </div>
               ))}
             </div>
+            <p className="ai-hint" style={{ margin: "4px 18px 14px" }}>Each tool you add is wired to the previous one. Drag a node’s handle to rewire, or hover a node and click ✕ to remove it.</p>
           </>
         )}
       </div>
@@ -2727,6 +2742,82 @@ function RunConsole({ currentRun, running, history, activeWorkflowId, onClose, o
                 </div>
               ))}
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Simulate (dry-run) results panel with Help/Suggest ───────────────────────
+
+function SimulateResultPanel({ plan, folderName, onConnectFolder, onAddTrigger, onSuggest, onRerun, onClose }) {
+  const [showHelp, setShowHelp] = useState(false);
+  const steps = plan?.steps || [];
+  const warnings = plan?.warnings || [];
+  const needsFiles = steps.some(s => (s.warnings || []).includes("needs-files"));
+  const noTrigger = !steps.some(s => s.toolId?.startsWith("trigger-"));
+  const disconnected = steps.filter(s => (s.warnings || []).includes("disconnected")).map(s => s.label);
+  return (
+    <div className="run-console sim-panel">
+      <div className="run-console-head">
+        <span className="run-console-title"><Play size={14}/> Dry run (no execution)</span>
+        <button className="run-console-close" onClick={onClose} title="Close">✕</button>
+      </div>
+      <div className="run-console-body">
+        <div className={`run-summary run-summary--${warnings.length ? "partial" : "success"}`}>
+          <span className={`run-dot run-dot--${warnings.length ? "error" : "done"}`} />
+          <span className="run-summary-status">{warnings.length ? `${warnings.length} warning(s)` : "No issues"}</span>
+          <span className="run-summary-meta">{steps.length} node(s)</span>
+        </div>
+
+        <div className="sim-section-title">Planned execution order</div>
+        <ol className="sim-order-list">
+          {steps.map((s, i) => (
+            <li key={i} className={(s.warnings || []).length ? "sim-step--warn" : ""}>
+              <span className="sim-step-num">{s.order}</span>
+              <span className="sim-step-name">{s.label}</span>
+              {(s.warnings || []).includes("needs-files") && <span className="sim-tag">needs files</span>}
+              {(s.warnings || []).includes("disconnected") && <span className="sim-tag">isolated</span>}
+            </li>
+          ))}
+        </ol>
+
+        {warnings.length > 0 && (
+          <>
+            <div className="sim-section-title">Issues &amp; fixes</div>
+            <div className="sim-fixes">
+              {needsFiles && (
+                <div className="sim-fix">
+                  <span>File-reading nodes have no input — no folder is connected.</span>
+                  <button className="run-tab" onClick={onConnectFolder}>{folderName ? `Reconnect “${folderName}”` : "Connect folder"}</button>
+                </div>
+              )}
+              {noTrigger && (
+                <div className="sim-fix">
+                  <span>No trigger node to start the flow.</span>
+                  <button className="run-tab" onClick={onAddTrigger}>Add Manual Trigger</button>
+                </div>
+              )}
+              {disconnected.length > 0 && (
+                <div className="sim-fix"><span>Not wired in: <b>{disconnected.join(", ")}</b> (amber on canvas). Drag from a node’s right handle to connect it.</span></div>
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="sim-actions">
+          <button className="button secondary" onClick={onSuggest}><Sparkles size={14}/> Suggest fixes</button>
+          <button className="button secondary" onClick={onRerun}><Play size={14}/> Re-run</button>
+          <button className="run-tab" onClick={() => setShowHelp(h => !h)}>{showHelp ? "Hide help" : "Help"}</button>
+        </div>
+
+        {showHelp && (
+          <div className="sim-help">
+            <p><strong>What is a dry run?</strong> It validates the graph and shows the order nodes would execute — nothing actually runs.</p>
+            <p>• <strong>Connect a folder</strong> so file-reading tools (Document Extractor, Insight Summarizer…) have input.</p>
+            <p>• <strong>Wire nodes</strong> by dragging from a node’s right handle to the next node’s left handle; delete a connection by selecting it and pressing Delete.</p>
+            <p>• <strong>Suggest</strong> recommends tools for your folder; <strong>Copilot</strong> builds a whole workflow from a goal.</p>
+          </div>
         )}
       </div>
     </div>
@@ -4716,7 +4807,8 @@ function ResizableSides({ children, className = "" }) {
 const FILE_LIST_SHIFT = 260;
 
 function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasRef,
-                     onNodeClick, onNodeDoubleClick, onConnect, onNodeDragStop, onDropTool, onNodesChange }) {
+                     onNodeClick, onNodeDoubleClick, onConnect, onNodeDragStop, onDropTool, onNodesChange,
+                     onDeleteEdges, onDeleteNodes }) {
   const { screenToFlowPosition, fitView } = useReactFlow();
   const prevCount    = useRef(workflowCount);
   const expandedId   = useRef(null); // id of the node whose file-list is currently open
@@ -4789,6 +4881,8 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
                  onConnect={onConnect} onNodeClick={onNodeClick}
                  onNodeDoubleClick={onNodeDoubleClick}
                  onNodeDragStop={onNodeDragStop}
+                 onEdgesDelete={onDeleteEdges} onNodesDelete={onDeleteNodes}
+                 deleteKeyCode={["Backspace","Delete"]}
                  onNodeMouseEnter={handleNodeMouseEnter}
                  onNodeMouseLeave={handleNodeMouseLeave}
                  fitView fitViewOptions={{ padding:0.12 }} minZoom={0.12}>
@@ -4978,11 +5072,13 @@ function App() {
   const [currentRun,    setCurrentRun]    = useState(null);  // live run record
   const [running,       setRunning]       = useState(false);
   const [showRunConsole, setShowRunConsole] = useState(false);
-  const [simPlan, setSimPlan] = useState(null); // dry-run overlay: { order:{localId:n}, warnNodes:{localId:[...]}, warnings:[] }
+  const [simPlan, setSimPlan] = useState(null); // dry-run overlay: { order, warnNodes, warnings, steps }
+  const [showSimPanel, setShowSimPanel] = useState(false);
   const [runHistory, setRunHistory] = useState(() => {
     try { return JSON.parse(localStorage.getItem("las-run-history") || "[]"); } catch { return []; }
   });
   const runAbortRef = useRef(null);
+  const suggestChainRef = useRef({ count: 0, lastLocalId: null }); // chains tools added from Suggest
 
   // ── AI Workflow Copilot ────────────────────────────────────────────────────
   const [showCopilot, setShowCopilot] = useState(false);
@@ -5211,6 +5307,36 @@ function App() {
     }));
   }, [splitNodeId, updateWorkflow]);
 
+  // Delete a single tool node (the ✕ on the node) — also drops its edges + python code.
+  const deleteToolNode = useCallback((nodeId) => {
+    const { wfId, localId } = splitNodeId(nodeId);
+    updateWorkflow(wfId, w => {
+      const { [localId]: _drop, ...py } = w.pythonNodeCode || {};
+      return {
+        customToolNodes: w.customToolNodes.filter(n => n.id !== localId),
+        manualEdges: w.manualEdges.filter(e => e.source !== localId && e.target !== localId),
+        pythonNodeCode: py,
+      };
+    });
+    if (suggestChainRef.current.lastLocalId === localId) suggestChainRef.current.lastLocalId = null;
+    setStatus({ type:"info", text:"Removed tool node." });
+  }, [splitNodeId, updateWorkflow]);
+
+  // Persist edge/node deletions done on the canvas (select + Delete/Backspace).
+  const handleDeleteEdges = useCallback((deleted) => {
+    for (const e of deleted) {
+      const i = e.id.indexOf("|"); if (i < 0) continue;
+      const wfId = e.id.slice(0, i), edgeId = e.id.slice(i + 1);
+      updateWorkflow(wfId, w => ({ manualEdges: w.manualEdges.filter(me => me.id !== edgeId) }));
+    }
+  }, [updateWorkflow]);
+  const handleDeleteNodes = useCallback((deleted) => {
+    for (const n of deleted) {
+      // Only remove user-added nodes (custom tools + sticky notes); skip the skeleton.
+      if (n.type === "stickyNote" || n.data?.custom) deleteToolNode(n.id);
+    }
+  }, [deleteToolNode]);
+
   // ── inject callbacks into derived nodes ──────────────────────────────────
 
   const derivedNodes = useMemo(() =>
@@ -5218,6 +5344,7 @@ function App() {
       if (n.type === "workflowHeader") return { ...n, data: { ...n.data, onRemove: removeWorkflow } };
       if (n.type === "workflowNode") {
         const data = { ...n.data, onFileOpen: handleFileOpen };
+        if (data.custom) data.onDeleteNode = deleteToolNode; // ✕ on user-added tool nodes
         // Overlay live run status (Run) or dry-run plan (Simulate) onto active-workflow nodes.
         if (data.workflowId === activeWorkflowId) {
           const localId = n.id.slice(data.workflowId.length + 1);
@@ -5239,7 +5366,7 @@ function App() {
       }};
       return n;
     }),
-    [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, nodeRunStatus, simPlan, activeWorkflowId],
+    [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, deleteToolNode, nodeRunStatus, simPlan, activeWorkflowId],
   );
 
   // ── folder scanning ───────────────────────────────────────────────────────
@@ -5312,6 +5439,7 @@ function App() {
   // ── AI suggest ────────────────────────────────────────────────────────────
 
   const handleAISuggest = useCallback(async () => {
+    suggestChainRef.current = { count: 0, lastLocalId: null }; // fresh chain per Suggest run
     setAiSuggest({ loading: true });
     try {
       const res = await fetch(`${BACKEND_URL}/api/ai/suggest`, {
@@ -5490,11 +5618,43 @@ function App() {
     setStatus({ type:"success", text:`Saved agent tool "${def.label}".` });
   }, [customBuilder, activeWorkflowId, updateWorkflow]);
 
-  const handleAISuggestAdd = useCallback((toolId) => {
+  const mkEdge = (source, target, i = 0) => ({
+    id: `manual-${source}-${target}-${Date.now()}-${i}`, source, target,
+    type: "smoothstep", animated: true,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 }, style: { strokeWidth: 2.3 },
+  });
+
+  // Add one suggested tool and auto-wire it to the previously added suggestion (chain).
+  const addSuggestedTool = useCallback((toolId) => {
     const tool = TOOL_CATALOG.find(t => t.id === toolId);
-    if (tool) { addToolToCanvas(tool); setStatus({ type:"success", text:`Added "${tool.label}" to canvas.` }); }
+    if (!tool) return;
+    const chain = suggestChainRef.current;
+    const k = chain.count;
+    const node = createToolNode(tool, { x: 380 + k * 250, y: 470 + (k % 2) * 80 }, `${Date.now().toString(36)}${k}`);
+    updateWorkflow(activeWorkflowId, w => ({
+      customToolNodes: [...w.customToolNodes, node],
+      manualEdges: chain.lastLocalId ? [...w.manualEdges, mkEdge(chain.lastLocalId, node.id)] : w.manualEdges,
+    }));
+    chain.lastLocalId = node.id;
+    chain.count = k + 1;
+    setStatus({ type:"success", text:`Added "${tool.label}"${chain.count > 1 ? " (connected)" : ""}.` });
+  }, [activeWorkflowId, updateWorkflow]);
+
+  // Add every suggestion at once as a connected left→right chain.
+  const addAllSuggested = useCallback((suggestions) => {
+    const tools = (suggestions || []).map(s => TOOL_CATALOG.find(t => t.id === s.toolId)).filter(Boolean);
+    if (!tools.length) return;
+    const stamp = Date.now().toString(36);
+    const nodes = tools.map((tool, k) => createToolNode(tool, { x: 380 + k * 250, y: 470 + (k % 2) * 80 }, `${stamp}${k}`));
+    const edges = nodes.slice(1).map((n, i) => mkEdge(nodes[i].id, n.id, i));
+    updateWorkflow(activeWorkflowId, w => ({
+      customToolNodes: [...w.customToolNodes, ...nodes],
+      manualEdges: [...w.manualEdges, ...edges],
+    }));
+    suggestChainRef.current = { count: nodes.length, lastLocalId: nodes[nodes.length - 1].id };
     setAiSuggest(null);
-  }, [addToolToCanvas]);
+    setStatus({ type:"success", text:`Added ${nodes.length} connected tool(s) from Suggest.` });
+  }, [activeWorkflowId, updateWorkflow]);
 
   // ── templates ─────────────────────────────────────────────────────────────
 
@@ -5609,23 +5769,39 @@ function App() {
   // execution. Real execution happens in runActiveWorkflow below.
   const simulateRun = useCallback(() => {
     const plan = planRun({ ...activeWorkflow, variables: workflowVars });
-    if (!plan.ok) { setStatus({ type:"warning", text: plan.reason }); setSimPlan(null); return; }
+    if (!plan.ok) { setStatus({ type:"warning", text: plan.reason }); setSimPlan(null); setShowSimPanel(false); return; }
     const order = {}, warnNodes = {};
     plan.steps.forEach(s => { order[s.id] = s.order; if (s.warnings.length) warnNodes[s.id] = s.warnings; });
-    setSimPlan({ order, warnNodes, warnings: plan.warnings });
+    setSimPlan({ order, warnNodes, warnings: plan.warnings, steps: plan.steps });
     setShowRunConsole(false);
-    const seq = plan.steps.map(s => `${s.order}. ${s.label}`).join("  →  ");
+    setShowSimPanel(true);
     setStatus({
       type: plan.warnings.length ? "warning" : "info",
       text: plan.warnings.length
-        ? `Dry run — ${plan.steps.length} node(s). ⚠ ${plan.warnings.join(" ")} · Order: ${seq}`
-        : `Dry run — ${plan.steps.length} node(s) would run in order: ${seq}`,
+        ? `Dry run — ${plan.steps.length} node(s), ${plan.warnings.length} warning(s). See the Simulate panel.`
+        : `Dry run — ${plan.steps.length} node(s), no issues. See the Simulate panel.`,
     });
   }, [activeWorkflow, workflowVars]);
 
   // A dry-run overlay is only valid for the current graph — clear it on edits / switch.
   const graphSig = `${activeWorkflowId}:${activeWorkflow.customToolNodes.length}:${activeWorkflow.manualEdges.length}`;
-  useEffect(() => { setSimPlan(null); }, [graphSig]);
+  useEffect(() => { setSimPlan(null); setShowSimPanel(false); }, [graphSig]);
+
+  // ── Simulate one-click fixes ───────────────────────────────────────────────
+  const fixConnectFolder = useCallback(() => {
+    if (activeWorkflow.folderName) reconnectFolder(); else connectWithDirectoryPicker();
+  }, [activeWorkflow.folderName, reconnectFolder, connectWithDirectoryPicker]);
+
+  const fixAddTrigger = useCallback(() => {
+    const tool = TOOL_CATALOG.find(t => t.id === "trigger-manual");
+    const firstId = simPlan?.steps?.[0]?.id;
+    const node = createToolNode(tool, { x: 120, y: 470 }, `${Date.now().toString(36)}trg`);
+    updateWorkflow(activeWorkflowId, w => ({
+      customToolNodes: [...w.customToolNodes, node],
+      manualEdges: firstId ? [...w.manualEdges, mkEdge(node.id, firstId)] : w.manualEdges,
+    }));
+    setStatus({ type:"success", text:"Added a Manual Trigger. Re-run Simulate to recheck." });
+  }, [activeWorkflowId, updateWorkflow, simPlan]);
 
   const runActiveWorkflow = useCallback(async () => {
     if (running) return;
@@ -5638,6 +5814,7 @@ function App() {
     setRunning(true);
     setNodeRunStatus({});
     setSimPlan(null);
+    setShowSimPanel(false);
     setShowRunConsole(true);
     setCurrentRun({ id:`run-${Date.now()}`, startedAt:new Date().toISOString(), status:"running", steps:[] });
     setStatus({ type:"info", text:`Running ${plan.steps.length} node(s)…` });
@@ -5935,6 +6112,7 @@ function App() {
             onConnect={handleConnect}
             onNodeDragStop={handleNodeDragStop} onDropTool={handleDropTool}
             onNodesChange={()=>{}} onEdgesChange={()=>{}}
+            onDeleteEdges={handleDeleteEdges} onDeleteNodes={handleDeleteNodes}
           />
         </ReactFlowProvider>
 
@@ -6074,7 +6252,8 @@ function App() {
       {aiSuggest && (
         <AISuggestPanel
           result={aiSuggest}
-          onAddTool={handleAISuggestAdd}
+          onAddTool={addSuggestedTool}
+          onAddAll={addAllSuggested}
           onClose={() => setAiSuggest(null)}
         />
       )}
@@ -6118,6 +6297,18 @@ function App() {
           activeWorkflowId={activeWorkflowId}
           onClose={() => setShowRunConsole(false)}
           onClearHistory={() => { setRunHistory([]); try { localStorage.removeItem("las-run-history"); } catch {} }}
+        />
+      )}
+
+      {showSimPanel && simPlan && (
+        <SimulateResultPanel
+          plan={simPlan}
+          folderName={activeWorkflow.folderName}
+          onConnectFolder={fixConnectFolder}
+          onAddTrigger={fixAddTrigger}
+          onSuggest={() => { setShowSimPanel(false); handleAISuggest(); }}
+          onRerun={simulateRun}
+          onClose={() => setShowSimPanel(false)}
         />
       )}
     </main>

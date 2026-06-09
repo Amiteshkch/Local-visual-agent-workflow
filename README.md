@@ -11,13 +11,18 @@ A local-first, n8n-inspired visual workflow builder that connects to a folder on
   - **Google Gemini (free tier)** — add your Gemini API key in the sidebar.
   - **Anthropic Claude (paid)** — add your Anthropic API key in the sidebar.
 - **Template** — load a pre-built starter workflow for common agent patterns.
-- **Suggest** — let the selected AI model propose next steps based on your current canvas.
+- **Suggest** — let the selected AI model propose next steps for your folder. Adding a suggestion now
+  **auto-connects** it to the previous one (or use **Add all as workflow**), so you get a runnable chain, not
+  loose nodes. Rewire by dragging a node’s handle; hover a node and click **✕** to remove it; select an edge and
+  press Delete to drop a connection.
 - **Run** — actually execute the workflow as a DAG. Each node runs in topological order, passing its
   output to the next, with **live per-node status on the canvas** (running → done / error) and a
   **Run console** showing each step's output, duration, and errors plus a run history. Runs entirely
   in the browser (Pyodide for Python, `fetch` for HTTP, in-browser PDF/DOCX/CSV parsing) — no backend
   required for execution.
-- **Simulate** — dry-run that validates the graph and shows the planned execution order without running it.
+- **Simulate** — a dry-run that validates the graph and paints the **planned execution order** (numbered badges)
+  on the canvas without running anything. The **Simulate panel** lists each step plus warnings (no folder
+  connected, isolated nodes, missing trigger) with **one-click fixes** and a **Suggest/Help** option to resolve them.
 - **AI Workflow Copilot** — describe an automation in plain English ("scan this folder, summarize the PDFs,
   write a markdown report") and the selected AI model assembles a validated workflow (catalog nodes + edges)
   laid out on the canvas, ready to **Place & Run**. _(Requires the backend + a configured AI provider.)_
