@@ -52,6 +52,7 @@ async function executeWorkflow(workflow, credentials = {}, webhookData = null) {
   };
 
   const results = {}; // nodeId → { success, output, error }
+  const vars = {};    // shared variable store for set-variable / {{vars.x}}
 
   const sortedNodes = topoSort(nodes, connections);
   console.log(`[Executor] Running "${name}" — order: ${sortedNodes.map(n => n.type).join(" → ")}`);
@@ -68,7 +69,7 @@ async function executeWorkflow(workflow, credentials = {}, webhookData = null) {
     let attempts = 0;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       attempts++;
-      result = await executeNode(node, { previousOutput, credentials, webhookData, workflowId: workflow.id });
+      result = await executeNode(node, { previousOutput, credentials, webhookData, workflowId: workflow.id, vars });
       if (result.success) break;
       if (attempt < maxRetries) {
         console.log(`[Executor]  ↺ Retry ${attempt + 1}/${maxRetries} for ${node.type} in ${retryDelay}ms…`);

@@ -2389,6 +2389,54 @@ ${unknown.length ? section("⬜ Unanalyzed", "#6c757d", unknown) : ""}
   return { success: true, output: { sent: true, to: toEmail, total: jobs.length, highMatches: high.length, date: today } };
 }
 
+// ─── Studio (TOOL_CATALOG) node handlers ──────────────────────────────────────
+// Lets the engine run workflows built in the Local Agent Studio, whose node
+// types are catalog ids (api-request, if-else, …). Browser-only nodes (Pyodide
+// Python, PDF/DOCX/CSV parsing) can't run server-side and are skipped clearly.
+function asTextBE(v, limit = 4000) {
+  if (v == null) return "";
+  if (typeof v === "string") return v.slice(0, limit);
+  try { return JSON.stringify(v).slice(0, limit); } catch { return String(v).slice(0, limit); }
+}
+async function runWait(node) {
+  const s = Math.min(300, Number(node.config?.seconds) || 2);
+  await new Promise(r => setTimeout(r, s * 1000));
+  return { success: true, output: { waited: s } };
+}
+async function runFilter(node, context) {
+  const c = node.config?.condition; let pass = true;
+  if (c) { try { pass = !!new Function("previousOutput", "vars", `return (${c});`)(context.previousOutput, context.vars); } catch { pass = false; } }
+  return { success: true, output: context.previousOutput, halted: !pass };
+}
+async function runSetVariable(node, context) {
+  const k = node.config?.key;
+  const v = interpolate(node.config?.value ?? "", { previousOutput: context.previousOutput, vars: context.vars });
+  if (k && context.vars) context.vars[k] = v;
+  return { success: true, output: context.previousOutput };
+}
+async function runTextFormatter(node, context) {
+  let t = asTextBE(context.previousOutput); const op = node.config?.op || "trim";
+  if (op === "trim") t = t.trim(); else if (op === "upper") t = t.toUpperCase();
+  else if (op === "lower") t = t.toLowerCase();
+  else if (op === "replace") t = t.split(node.config?.find || "").join(node.config?.replace || "");
+  return { success: true, output: { text: t } };
+}
+async function runWebResearchBE(node, context) {
+  const q = (interpolate(node.config?.query || "", { previousOutput: context.previousOutput }) || "").trim() || "research";
+  return { success: true, output: { query: q, searches: {
+    "Google Scholar": `https://scholar.google.com/scholar?q=${encodeURIComponent(q)}`,
+    "arXiv": `https://arxiv.org/search/?query=${encodeURIComponent(q)}&searchtype=all`,
+    "Google": `https://www.google.com/search?q=${encodeURIComponent(q)}`,
+  } } };
+}
+async function runPassThrough(node, context) { return { success: true, output: context.previousOutput }; }
+async function runStudioClaude(node, context) {
+  const cfg = node.config || {};
+  const msg = `${cfg.prompt || "Summarize the data and suggest the next step."}\n\nDATA:\n${asTextBE(context.previousOutput, 6000)}`;
+  return runClaude({ ...node, config: { provider: cfg.provider || "anthropic", model: cfg.model || "", prompt: "You are a helpful workflow assistant.", userMessage: msg } }, context);
+}
+const BROWSER_ONLY = new Set(["document-extractor", "table-analyzer", "data-cleaner", "chart-builder", "classifier", "insight-summarizer", "python-step", "report-writer"]);
+
 // ─── Node Router ──────────────────────────────────────────────────────────────
 const HANDLERS = {
   manual:      runManual,
@@ -2409,10 +2457,30 @@ const HANDLERS = {
   postdocagent:     runPostdocAgent,
   researchersearch: runResearcherSearch,
   researcheragent:  runResearcherAgent,
+  // ── Local Agent Studio catalog node types (server-capable subset) ──
+  "trigger-manual":   runManual,
+  "trigger-webhook":  runWebhook,
+  "trigger-schedule": runSchedule,
+  "api-request":      runHTTP,
+  "if-else":          runIfElse,
+  "filter":           runFilter,
+  "merge-node":       runMerge,
+  "wait":             runWait,
+  "set-variable":     runSetVariable,
+  "text-formatter":   runTextFormatter,
+  "code-js":          runTransform,
+  "web-research":     runWebResearchBE,
+  "claude-ai":        runStudioClaude,
+  "slack-notify":     runPassThrough,
+  "output-display":   runPassThrough,
 };
 
 async function executeNode(node, context) {
-  const handler = HANDLERS[node.type];
+  // Browser-only studio nodes (need local file access / Pyodide) — skip cleanly.
+  if (BROWSER_ONLY.has(node.type)) {
+    return { success: true, output: { browserOnly: true, note: `"${node.type}" runs in the browser; skipped server-side.` } };
+  }
+  const handler = HANDLERS[node.type] || (String(node.type).startsWith("custom-") ? runStudioClaude : null);
   if (!handler) return { success: false, error: `Unknown node type: ${node.type}` };
   try {
     return await handler(node, context);
@@ -2421,4 +2489,15 @@ async function executeNode(node, context) {
   }
 }
 
-module.exports = { executeNode };
+// Convert a Local Agent Studio workflow (React-Flow shape: nodes with
+// data.customToolId + manualEdges) into the engine's { nodes:[{id,type,config}],
+// connections:[{from,to}] } shape so executeWorkflow can run it.
+function studioToEngineWorkflow(wf = {}) {
+  const nodes = (wf.customToolNodes || wf.nodes || [])
+    .filter(n => n.type !== "stickyNote")
+    .map(n => ({ id: n.id, type: n.data?.customToolId || n.type, config: n.data?.config || {} }));
+  const connections = (wf.manualEdges || wf.connections || []).map(e => ({ from: e.source || e.from, to: e.target || e.to }));
+  return { id: wf.id, name: wf.folderName || wf.name || "Workflow", nodes, connections };
+}
+
+module.exports = { executeNode, studioToEngineWorkflow, BROWSER_ONLY };
