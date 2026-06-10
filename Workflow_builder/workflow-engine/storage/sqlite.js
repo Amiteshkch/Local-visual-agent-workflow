@@ -100,6 +100,24 @@ function getLogs(workflowId, limit = 20) {
   return rows.map(r => JSON.parse(r.data));
 }
 
+// ─── Scheduler state (last run/success per workflow, for catch-up) ────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scheduler_state (
+    id   INTEGER PRIMARY KEY CHECK (id = 1),
+    data TEXT NOT NULL DEFAULT '{}'
+  );
+  INSERT OR IGNORE INTO scheduler_state (id, data) VALUES (1, '{}');
+`);
+
+function getSchedulerState() {
+  const row = db.prepare("SELECT data FROM scheduler_state WHERE id = 1").get();
+  return row ? JSON.parse(row.data) : {};
+}
+
+function saveSchedulerState(state) {
+  db.prepare("INSERT OR REPLACE INTO scheduler_state (id, data) VALUES (1, ?)").run(JSON.stringify(state));
+}
+
 // ─── Credentials ──────────────────────────────────────────────────────────────
 function getCredentials() {
   return readCredentialsRow();
@@ -118,4 +136,5 @@ function saveCredentials(creds) {
 module.exports = {
   listWorkflows, getWorkflow, saveWorkflow, deleteWorkflow,
   saveLog, getLogs, getCredentials, saveCredentials,
+  getSchedulerState, saveSchedulerState,
 };

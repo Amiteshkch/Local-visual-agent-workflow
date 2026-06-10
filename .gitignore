@@ -42,3 +42,4 @@ Workflow_builder/workflow-engine/trading-agent/*.pdf
 *.jpg
 *.jpeg
 WORKFLOW_BUILDER_LLM_HANDOFF.md
+Workflow_builder/workflow-engine/server.log

@@ -76,6 +76,20 @@ async function getLogs(workflowId, limit = 20) {
   return logs;
 }
 
+// ─── Scheduler state (last run/success per workflow, for catch-up) ────────────
+const SCHEDULER_STATE_FILE = path.join(__dirname, "scheduler-state.json");
+
+async function getSchedulerState() {
+  try {
+    const raw = await fs.readFile(SCHEDULER_STATE_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch { return {}; }
+}
+
+async function saveSchedulerState(state) {
+  await fs.writeFile(SCHEDULER_STATE_FILE, JSON.stringify(state, null, 2));
+}
+
 // ─── Credentials (stored locally, never sent to client) ───────────────────────
 async function getCredentials() {
   try {
@@ -95,4 +109,4 @@ async function saveCredentials(creds) {
   return { saved: true };
 }
 
-module.exports = { listWorkflows, getWorkflow, saveWorkflow, deleteWorkflow, saveLog, getLogs, getCredentials, saveCredentials };
+module.exports = { listWorkflows, getWorkflow, saveWorkflow, deleteWorkflow, saveLog, getLogs, getCredentials, saveCredentials, getSchedulerState, saveSchedulerState };
