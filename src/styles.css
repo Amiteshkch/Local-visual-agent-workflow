@@ -5233,3 +5233,37 @@ h1 {
   max-width: 74px; overflow: hidden; text-overflow: ellipsis;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
+
+/* ── sidebar bottom dock (Privacy / Rules / Variables as hover icons) ─────── */
+.sidebar-dock { position: relative; margin-top: 6px; flex: none; }
+.dock-row { display: flex; gap: 6px; }
+.dock-btn {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 7px 4px 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+  color: var(--muted); cursor: default;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.dock-btn span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.dock-btn:hover, .dock-btn.active {
+  border-color: var(--orange); color: var(--ink); background: #fffaf2;
+}
+.dock-popover {
+  position: absolute; bottom: calc(100% + 6px); left: 0; right: 0; z-index: 40;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 -10px 28px rgba(21, 16, 10, 0.18);
+  animation: dock-pop .14s ease-out;
+}
+@keyframes dock-pop { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+.dock-pop-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 800; color: var(--ink);
+  margin-bottom: 6px;
+}
+.dock-popover p { margin: 0 0 6px; font-size: 11px; line-height: 1.55; color: var(--ink); }
+.dock-popover p:last-child { margin-bottom: 0; }
+.dock-popover .extension-list { color: var(--muted); }
+.dock-popover .vars-body { font-size: 11px; }

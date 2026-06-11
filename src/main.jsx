@@ -1697,6 +1697,83 @@ function WorkflowVariablesPanel({ variables, onChange }) {
   );
 }
 
+// ─── Sidebar bottom dock ──────────────────────────────────────────────────────
+// Privacy / Workflow rules / Variables live as a single row of small icons at
+// the bottom of the sidebar. Hovering an icon pops its panel up; moving the
+// cursor away collapses it (unless an input inside is being edited).
+function SidebarDock({ topExtensionsText, variables, onVarsChange }) {
+  const [openId, setOpenId] = useState(null);
+  const [newKey, setNewKey] = useState("");
+  const [newVal, setNewVal] = useState("");
+  const addVar = () => {
+    const k = newKey.trim();
+    if (!k) return;
+    onVarsChange({ ...variables, [k]: newVal });
+    setNewKey(""); setNewVal("");
+  };
+  const removeVar = (k) => { const v = { ...variables }; delete v[k]; onVarsChange(v); };
+
+  return (
+    <div className="sidebar-dock"
+         onMouseLeave={e => { if (!e.currentTarget.contains(document.activeElement)) setOpenId(null); }}>
+      {openId && (
+        <div className="dock-popover">
+          {openId === "privacy" && (
+            <>
+              <div className="dock-pop-title"><LockKeyhole size={13}/> Privacy</div>
+              <p>This app runs in your browser on localhost. It reads folder metadata only and does not upload files.</p>
+            </>
+          )}
+          {openId === "rules" && (
+            <>
+              <div className="dock-pop-title"><SlidersHorizontal size={13}/> Workflow rules</div>
+              <p>Files are routed by extension into Documents, Code, Images, Data, or Other branches.</p>
+              <p className="extension-list">{topExtensionsText}</p>
+            </>
+          )}
+          {openId === "vars" && (
+            <>
+              <div className="dock-pop-title"><Variable size={13}/> Variables <span className="vars-count">{Object.keys(variables).length}</span></div>
+              <div className="vars-body">
+                {Object.entries(variables).map(([k, v]) => (
+                  <div key={k} className="var-row">
+                    <span className="var-key">{k}</span>
+                    <input className="var-val" defaultValue={v}
+                           onBlur={e => onVarsChange({ ...variables, [k]: e.target.value })} />
+                    <button className="var-del" onClick={() => removeVar(k)}><Trash2 size={11}/></button>
+                  </div>
+                ))}
+                <div className="var-add-row">
+                  <input className="var-new-key" value={newKey} onChange={e => setNewKey(e.target.value)}
+                         placeholder="key" onKeyDown={e => e.key === "Enter" && addVar()} />
+                  <input className="var-new-val" value={newVal} onChange={e => setNewVal(e.target.value)}
+                         placeholder="value" onKeyDown={e => e.key === "Enter" && addVar()} />
+                  <button className="var-add-btn" onClick={addVar}><Plus size={12}/></button>
+                </div>
+                <p className="vars-hint">Use <code>{"{{vars.key}}"}</code> in any node config.</p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      <div className="dock-row">
+        <button type="button" className={`dock-btn${openId === "privacy" ? " active" : ""}`}
+                onMouseEnter={() => setOpenId("privacy")} onFocus={() => setOpenId("privacy")}>
+          <LockKeyhole size={14}/><span>Privacy</span>
+        </button>
+        <button type="button" className={`dock-btn${openId === "rules" ? " active" : ""}`}
+                onMouseEnter={() => setOpenId("rules")} onFocus={() => setOpenId("rules")}>
+          <SlidersHorizontal size={14}/><span>Rules</span>
+        </button>
+        <button type="button" className={`dock-btn${openId === "vars" ? " active" : ""}`}
+                onMouseEnter={() => setOpenId("vars")} onFocus={() => setOpenId("vars")}>
+          <Variable size={14}/><span>Variables{Object.keys(variables).length ? ` · ${Object.keys(variables).length}` : ""}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Sticky note node ─────────────────────────────────────────────────────────
 
 function StickyNoteNode({ data, id }) {
@@ -6396,29 +6473,7 @@ function App() {
           <div className="section-resize-handle" onMouseDown={paletteResizeDown} title="Drag to resize" />
         </section>
 
-        <div className="sidebar-utility-stack">
-          <details
-            className={`panel sidebar-accordion${privacyH !== null ? " panel--fixed" : ""}`}
-            ref={privacyRef}
-            style={privacyH !== null ? { flex:"none", height:privacyH, overflow:"hidden" } : {}}
-          >
-            <summary className="panel-title"><LockKeyhole size={16}/>Privacy<ChevronDown size={13}/></summary>
-            <p>This app runs in your browser on localhost. It reads folder metadata only and does not upload files.</p>
-            <div className="section-resize-handle" onMouseDown={privacyResizeDown} title="Drag to resize" />
-          </details>
-
-          <details
-            className={`panel sidebar-accordion compact${workflowRH !== null ? " panel--fixed" : ""}`}
-            ref={workflowRef}
-            style={workflowRH !== null ? { flex:"none", height:workflowRH, overflow:"hidden" } : {}}
-          >
-            <summary className="panel-title"><SlidersHorizontal size={16}/>Workflow rules<ChevronDown size={13}/></summary>
-            <p>Files are routed by extension into Documents, Code, Images, Data, or Other branches.</p>
-            <p className="extension-list">{topExtensionsText}</p>
-            <div className="section-resize-handle" onMouseDown={workflowResizeDown} title="Drag to resize" />
-          </details>
-          <WorkflowVariablesPanel variables={workflowVars} onChange={setWorkflowVars} />
-        </div>
+        <SidebarDock topExtensionsText={topExtensionsText} variables={workflowVars} onVarsChange={setWorkflowVars} />
 
         <div className={`status status-${status.type}`} role="status">
           {status.type==="success"?<CheckCircle2 size={17}/>:status.type==="error"?<XCircle size={17}/>:<Info size={17}/>}
