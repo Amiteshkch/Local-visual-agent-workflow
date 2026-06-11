@@ -4,6 +4,7 @@ import {
   addEdge,
   Background,
   BaseEdge,
+  ControlButton,
   Controls,
   EdgeLabelRenderer,
   getSmoothStepPath,
@@ -1611,7 +1612,7 @@ function CommandPalette({ onAddTool, onClose }) {
 
 // ─── Canvas floating toolbar ──────────────────────────────────────────────────
 
-function CanvasToolbar({ onAddNote, onFitView, onSearch, onTemplate, onImport, onTidy }) {
+function CanvasToolbar({ onAddNote, onFitView, onSearch, onTemplate, onImport, onTidy, nodeStyle, onToggleNodeStyle }) {
   return (
     <div className="canvas-toolbar">
       <button className="ctb-btn" onClick={onTemplate} title="Start from template"><Sparkles size={15}/> Templates</button>
@@ -1619,6 +1620,10 @@ function CanvasToolbar({ onAddNote, onFitView, onSearch, onTemplate, onImport, o
       <button className="ctb-btn" onClick={onSearch}   title="Search nodes (Ctrl+K)"><Search size={15}/> Add node</button>
       <button className="ctb-btn" onClick={onAddNote}  title="Add sticky note"><StickyNote size={15}/> Note</button>
       <div className="ctb-sep"/>
+      <button className="ctb-btn" onClick={onToggleNodeStyle}
+              title={nodeStyle === "compact" ? "Switch to detailed card nodes" : "Switch to compact n8n-style blocks"}>
+        <Layers3 size={15}/> {nodeStyle === "compact" ? "Cards" : "Blocks"}
+      </button>
       <button className="ctb-btn" onClick={onTidy}     title="Auto-arrange your added nodes by connection order"><SlidersHorizontal size={15}/> Tidy</button>
       <button className="ctb-btn" onClick={onFitView}  title="Fit all workflows in view"><Layers3 size={15}/> Fit view</button>
       <button className="ctb-btn" onClick={onImport}   title="Import workflow JSON"><Upload size={15}/> Import</button>
@@ -1886,6 +1891,35 @@ function WorkflowHeaderNode({ data }) {
 function WorkflowNode({ data, id }) {
   const Icon = data.icon || Layers3;
   const [showFiles, setShowFiles] = useState(false);
+
+  // n8n-style compact block: square icon tile with the label underneath.
+  // Toggled canvas-wide from the toolbar ("Blocks" / "Cards").
+  if (data.compact) {
+    return (
+      <div className={`wf-node-compact tone-${data.tone||"default"}${data.runState?` node-run-${data.runState}`:""}`}
+           title={`${data.label}${data.subtitle ? ` — ${data.subtitle}` : ""}`}>
+        <Handle type="target" position={Position.Left} />
+        {data.custom && data.onDeleteNode && (
+          <button className="node-del" title="Remove this tool"
+                  onMouseDown={e => { e.stopPropagation(); data.onDeleteNode(id); }}>
+            <XCircle size={14}/>
+          </button>
+        )}
+        {data.pinned && (
+          <button className="node-pin-badge" title="Output pinned — runs reuse saved data. Click to unpin."
+                  onMouseDown={e => { e.stopPropagation(); data.onUnpin?.(); }}>📌</button>
+        )}
+        {data.simOrder != null && <span className="node-sim-order">{data.simOrder}</span>}
+        <div className={`wnc-box${data.tone === "trigger" ? " wnc-box--trigger" : ""}`}>
+          <Icon size={26} strokeWidth={2}/>
+          {data.runState && <span className={`wnc-dot wnc-dot--${data.runState}`}/>}
+        </div>
+        <div className="wnc-label">{data.label}</div>
+        <Handle type="source" position={Position.Right} />
+      </div>
+    );
+  }
+
   return (
     <div className={`workflow-node tone-${data.tone||"default"}${data.drillable?" node-drillable":""}${data.runState?` node-run-${data.runState}`:""}${data.simWarn?" node-sim-warn":""}`}
          onMouseEnter={()=>setShowFiles(true)} onMouseLeave={()=>setShowFiles(false)}>
@@ -1898,6 +1932,10 @@ function WorkflowNode({ data, id }) {
       )}
       {data.simOrder != null && (
         <span className="node-sim-order" title={data.simWarn ? data.simWarn.map(w => w==="needs-files"?"needs a connected folder":w==="disconnected"?"not wired to other nodes":w).join(", ") : `Step ${data.simOrder} in the planned run`}>{data.simOrder}</span>
+      )}
+      {data.pinned && (
+        <button className="node-pin-badge" title="Output pinned — runs reuse saved data. Click to unpin."
+                onMouseDown={e => { e.stopPropagation(); data.onUnpin?.(); }}>📌</button>
       )}
       <div className="node-heading">
         <span className="node-icon"><Icon size={18} strokeWidth={2.2} /></span>
@@ -2638,23 +2676,51 @@ function CopilotPanel({ state, onBuild, onPlace, onClose }) {
 
 const RUN_DOT = { running:"running", done:"done", error:"error", skipped:"skipped", success:"done", partial:"error", aborted:"skipped" };
 
-function RunStep({ step }) {
+// Pretty-print any value as JSON, truncated so huge outputs can't freeze the UI.
+function jsonPreview(v, max = 5000) {
+  if (v === undefined) return "(no data)";
+  let s;
+  try { s = typeof v === "string" ? v : JSON.stringify(v, null, 2); } catch { s = String(v); }
+  if (s == null) return "(no data)";
+  return s.length > max ? `${s.slice(0, max)}\n… ${(s.length - max).toLocaleString()} more characters` : s;
+}
+
+function RunStep({ step, pinned, onTogglePin }) {
   const [open, setOpen] = useState(false);
-  const hasDetail = step.preview || step.error || step.output != null;
+  const [dataTab, setDataTab] = useState("output"); // "input" | "output"
+  const hasDetail = step.preview || step.error || step.output != null || step.input !== undefined;
+  const canPin = onTogglePin && step.status === "done" && step.output !== undefined;
   return (
     <div className={`run-step run-step--${step.status}`}>
       <div className="run-step-head" onClick={() => hasDetail && setOpen(o => !o)}>
         <span className={`run-dot run-dot--${RUN_DOT[step.status] || "idle"}`} />
         <span className="run-step-label">{step.label}</span>
+        {(step.pinned || pinned) && <span className="run-step-pin" title="This node uses pinned data">📌</span>}
         {step.branch && <span className="run-step-branch">{step.branch}</span>}
         <span className="run-step-dur">{step.durationMs != null ? `${step.durationMs}ms` : ""}</span>
         {hasDetail && (open ? <ChevronUp size={13}/> : <ChevronDown size={13}/>)}
       </div>
       {open && (
         <div className="run-step-detail">
-          {step.error
-            ? <pre className="run-step-err">{step.error}</pre>
-            : <pre className="run-step-out">{step.preview || (typeof step.output === "string" ? step.output : JSON.stringify(step.output, null, 2))}</pre>}
+          {step.error && <pre className="run-step-err">{step.error}</pre>}
+          {step.preview && !step.error && <pre className="run-step-out">{step.preview}</pre>}
+          {/* n8n-style input/output data viewer */}
+          <div className="run-io">
+            <div className="run-io-tabs">
+              <button className={`run-io-tab${dataTab === "input" ? " active" : ""}`}
+                      onClick={() => setDataTab("input")}>Input</button>
+              <button className={`run-io-tab${dataTab === "output" ? " active" : ""}`}
+                      onClick={() => setDataTab("output")}>Output</button>
+              {canPin && (
+                <button className={`run-io-pin${pinned ? " pinned" : ""}`}
+                        title={pinned ? "Unpin — node executes normally on the next run" : "Pin this output — next runs reuse it instead of executing the node"}
+                        onClick={() => onTogglePin(step.nodeId, step.output)}>
+                  📌 {pinned ? "Unpin data" : "Pin output"}
+                </button>
+              )}
+            </div>
+            <pre className="run-io-json">{jsonPreview(dataTab === "input" ? step.input : step.output)}</pre>
+          </div>
         </div>
       )}
     </div>
@@ -2725,7 +2791,7 @@ function CustomAgentBuilder({ initial, onSave, onClose }) {
   );
 }
 
-function RunConsole({ currentRun, running, history, activeWorkflowId, onClose, onClearHistory }) {
+function RunConsole({ currentRun, running, history, activeWorkflowId, pinnedData = {}, onTogglePin, onClose, onClearHistory }) {
   const [tab, setTab] = useState("current");
   const [openRun, setOpenRun] = useState(null);
   const [scope, setScope] = useState("this"); // "this" | "all"
@@ -2755,7 +2821,9 @@ function RunConsole({ currentRun, running, history, activeWorkflowId, onClose, o
                 <span className="run-summary-meta">{run.steps.length} step(s)</span>
               </div>
               {run.status === "empty" && <div className="run-empty">No tool nodes on the canvas. Add tools and connect them, or use Copilot.</div>}
-              <div className="run-steps">{run.steps.map((s, i) => <RunStep key={i} step={s} />)}</div>
+              <div className="run-steps">{run.steps.map((s, i) => (
+                <RunStep key={i} step={s} pinned={s.nodeId in pinnedData} onTogglePin={onTogglePin} />
+              ))}</div>
             </>
           )
         )}
@@ -4900,6 +4968,14 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
                      onNodeClick, onNodeDoubleClick, onConnect, onNodeDragStop, onDropTool, onNodesChange,
                      onDeleteEdges, onDeleteNodes }) {
   const { screenToFlowPosition, fitView } = useReactFlow();
+  // Minimap can be collapsed via the controls button; choice persists.
+  const [miniMapOn, setMiniMapOn] = useState(() => {
+    try { return localStorage.getItem("las-minimap") !== "off"; } catch { return true; }
+  });
+  const toggleMiniMap = useCallback(() => setMiniMapOn(v => {
+    try { localStorage.setItem("las-minimap", v ? "off" : "on"); } catch {}
+    return !v;
+  }), []);
   const prevCount    = useRef(workflowCount);
   const expandedId   = useRef(null); // id of the node whose file-list is currently open
   const [nodes, setNodes, handleNodesChange] = useNodesState(derivedNodes);
@@ -4977,12 +5053,20 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
                  onNodeMouseLeave={handleNodeMouseLeave}
                  fitView fitViewOptions={{ padding:0.12 }} minZoom={0.12}>
         <Background color="#d7d0c3" gap={24} size={1.2} />
-        <Controls position="bottom-left" />
-        <MiniMap
-          position="bottom-right" pannable zoomable
-          nodeColor={miniMapNodeColor} nodeStrokeWidth={3}
-          maskColor="rgba(46, 36, 25, 0.08)"
-        />
+        <Controls position="bottom-left">
+          <ControlButton onClick={toggleMiniMap}
+            title={miniMapOn ? "Hide minimap" : "Show minimap"}
+            className={miniMapOn ? "ctrl-minimap on" : "ctrl-minimap"}>
+            <Maximize2 size={12} />
+          </ControlButton>
+        </Controls>
+        {miniMapOn && (
+          <MiniMap
+            position="bottom-right" pannable zoomable
+            nodeColor={miniMapNodeColor} nodeStrokeWidth={3}
+            maskColor="rgba(46, 36, 25, 0.08)"
+          />
+        )}
       </ReactFlow>
     </div>
   );
@@ -5033,7 +5117,7 @@ function normalizeDirectoryFiles(fileList) {
     type:f.type||"", lastModified:f.lastModified, category:classifyFile(f.name), fileObject:f,
   }));
 }
-const EMPTY_WF = () => ({ id:`wf-${Date.now()}`, folderName:"", files:[], customToolNodes:[], manualEdges:[], runState:"idle", pythonNodeCode:{} });
+const EMPTY_WF = () => ({ id:`wf-${Date.now()}`, folderName:"", files:[], customToolNodes:[], manualEdges:[], runState:"idle", pythonNodeCode:{}, pinnedData:{} });
 
 // ─── workflow (de)serialization — shared by import/export and persistence ──────
 // Icons are React components and files carry FileSystem handles/blobs; neither
@@ -5062,6 +5146,7 @@ function serializeWorkflow(wf) {
     })),
     manualEdges: wf.manualEdges || [],
     pythonNodeCode: wf.pythonNodeCode || {},
+    ...(Object.keys(wf.pinnedData || {}).length ? { pinnedData: wf.pinnedData } : {}),
     ...(wf.variables ? { variables: wf.variables } : {}),
   };
 }
@@ -5081,6 +5166,7 @@ function deserializeWorkflow(json, customTools = []) {
     })),
     manualEdges: json.manualEdges || [],
     pythonNodeCode: json.pythonNodeCode || {},
+    pinnedData: json.pinnedData || {},
     runState: "idle",
   };
 }
@@ -5156,6 +5242,14 @@ function App() {
   const [showTemplates,  setShowTemplates]  = useState(false);
   const [showPalette,    setShowPalette]    = useState(false);
   const [insertEdgeCtx,  setInsertEdgeCtx]  = useState(null); // {wfId, edgeId, source, target} — palette inserts into this connection
+  const [nodeStyle, setNodeStyle] = useState(() => {           // "card" (detailed) | "compact" (n8n-style block)
+    try { return localStorage.getItem("las-node-style") || "card"; } catch { return "card"; }
+  });
+  const toggleNodeStyle = useCallback(() => setNodeStyle(s => {
+    const next = s === "card" ? "compact" : "card";
+    try { localStorage.setItem("las-node-style", next); } catch {}
+    return next;
+  }), []);
   const [showAIProvider, setShowAIProvider] = useState(false);
   const [workflowVars,   setWorkflowVars]   = useState({});
   const importFileRef = useRef(null);
@@ -5444,17 +5538,36 @@ function App() {
   }, [deleteToolNode]);
   const handleDeleteEdgeById = useCallback((edgeId) => { handleDeleteEdges([{ id: edgeId }]); }, [handleDeleteEdges]);
 
+  // Pin/unpin a node's last output as sample data: pinned nodes are not
+  // executed on the next runs — their saved output feeds downstream nodes.
+  const togglePinStep = useCallback((nodeId, output) => {
+    updateWorkflow(activeWorkflowId, w => {
+      const p = { ...(w.pinnedData || {}) };
+      const wasPinned = nodeId in p;
+      if (wasPinned) delete p[nodeId]; else p[nodeId] = output;
+      return { pinnedData: p };
+    });
+    setStatus({ type:"info", text:
+      nodeId in (activeWorkflow.pinnedData || {})
+        ? "Unpinned — the node will execute normally on the next run."
+        : "Output pinned — next runs reuse this data instead of executing the node." });
+  }, [activeWorkflowId, activeWorkflow.pinnedData, updateWorkflow]);
+
   // ── inject callbacks into derived nodes ──────────────────────────────────
 
   const derivedNodes = useMemo(() =>
     rawNodes.map(n => {
       if (n.type === "workflowHeader") return { ...n, data: { ...n.data, onRemove: removeWorkflow } };
       if (n.type === "workflowNode") {
-        const data = { ...n.data, onFileOpen: handleFileOpen };
+        const data = { ...n.data, onFileOpen: handleFileOpen, compact: nodeStyle === "compact" };
         if (data.custom) data.onDeleteNode = deleteToolNode; // ✕ on user-added tool nodes
         // Overlay live run status (Run) or dry-run plan (Simulate) onto active-workflow nodes.
         if (data.workflowId === activeWorkflowId) {
           const localId = n.id.slice(data.workflowId.length + 1);
+          if (localId in (activeWorkflow.pinnedData || {})) {
+            data.pinned = true;
+            data.onUnpin = () => togglePinStep(localId);
+          }
           const rs = nodeRunStatus[localId];
           if (rs) {
             data.runState = rs;
@@ -5473,7 +5586,7 @@ function App() {
       }};
       return n;
     }),
-    [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, deleteToolNode, nodeRunStatus, simPlan, activeWorkflowId],
+    [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, deleteToolNode, nodeRunStatus, simPlan, activeWorkflowId, activeWorkflow.pinnedData, togglePinStep, nodeStyle],
   );
 
   // ＋ on an edge: remember which connection to split, then open the palette.
@@ -6323,6 +6436,8 @@ function App() {
           onTemplate={() => setShowTemplates(true)}
           onImport={() => importFileRef.current?.click()}
           onTidy={tidyActiveWorkflow}
+          nodeStyle={nodeStyle}
+          onToggleNodeStyle={toggleNodeStyle}
         />
         <input ref={importFileRef} type="file" accept=".json" className="visually-hidden" onChange={handleImport} />
 
@@ -6528,6 +6643,8 @@ function App() {
       {showRunConsole && (
         <RunConsole
           currentRun={currentRun}
+          pinnedData={activeWorkflow.pinnedData || {}}
+          onTogglePin={togglePinStep}
           running={running}
           history={runHistory}
           activeWorkflowId={activeWorkflowId}

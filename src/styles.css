@@ -5108,3 +5108,92 @@ h1 {
   border: 1px solid var(--line);
   box-shadow: 0 8px 25px rgba(46, 36, 25, 0.12);
 }
+.ctrl-minimap.on { background: var(--orange); }
+.ctrl-minimap.on svg { stroke: #fff; }
+
+/* ── run-step input/output data viewer + pin (n8n-style) ──────────────────── */
+.run-io { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.run-io-tabs {
+  display: flex; align-items: center; gap: 2px;
+  padding: 4px 6px; background: #f0ebe4; border-bottom: 1px solid var(--line);
+}
+.run-io-tab {
+  padding: 3px 10px; border: none; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--muted);
+  font-size: 11px; font-weight: 700;
+}
+.run-io-tab.active { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px rgba(21,16,10,0.12); }
+.run-io-pin {
+  margin-left: auto; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  font-size: 11px; font-weight: 700;
+}
+.run-io-pin:hover { border-color: var(--orange); color: var(--orange-dark); }
+.run-io-pin.pinned { background: #fff3bf; border-color: #f0c419; }
+.run-io-json {
+  margin: 0; padding: 10px 12px; max-height: 240px; overflow: auto;
+  font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  background: #fbf8f1; color: var(--ink);
+}
+.run-step-pin { font-size: 11px; }
+
+/* pin badge on a canvas node whose output is pinned */
+.node-pin-badge {
+  position: absolute; top: -9px; left: -9px; z-index: 3;
+  width: 22px; height: 22px; border-radius: 999px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff3bf; border: 1px solid #f0c419;
+  font-size: 11px; line-height: 1; cursor: pointer;
+  box-shadow: 0 2px 6px rgba(21,16,10,0.18);
+}
+.node-pin-badge:hover { background: #ffe066; }
+
+/* ── compact n8n-style node blocks (toolbar: Blocks/Cards toggle) ─────────── */
+.wf-node-compact {
+  position: relative; width: 100px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.wnc-box {
+  position: relative;
+  width: 72px; height: 72px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  background: #fffefb; color: var(--ink);
+  border: 1px solid #d8cec0; border-left: 5px solid var(--orange);
+  box-shadow: 0 10px 24px rgba(49, 38, 27, 0.14);
+  transition: box-shadow .15s, transform .15s;
+}
+.wf-node-compact:hover .wnc-box { transform: translateY(-1px); box-shadow: 0 14px 30px rgba(49, 38, 27, 0.22); }
+/* n8n rounds the left side of trigger nodes */
+.wnc-box--trigger { border-radius: 36px 14px 14px 36px; }
+.wnc-label {
+  max-width: 100px; text-align: center;
+  font-size: 11px; font-weight: 700; line-height: 1.25; color: var(--ink);
+}
+/* tone accents — mirror the card nodes */
+.wf-node-compact.tone-trigger .wnc-box { border-left-color: var(--green); }
+.wf-node-compact.tone-scanner .wnc-box { border-left-color: var(--blue); }
+.wf-node-compact.tone-router  .wnc-box { border-left-color: var(--plum); }
+.wf-node-compact.tone-agent   .wnc-box { border-left-color: var(--orange); }
+.wf-node-compact.tone-paper   .wnc-box { border-left-color: #8b6d4d; }
+.wf-node-compact.tone-code    .wnc-box { border-left-color: #4b728f; }
+.wf-node-compact.tone-media   .wnc-box { border-left-color: #aa5f6a; }
+.wf-node-compact.tone-data    .wnc-box { border-left-color: var(--teal); }
+/* run-state ring + status dot */
+.wf-node-compact.node-run-running .wnc-box { border-color: #4dabf7; box-shadow: 0 0 0 3px rgba(77,171,247,0.25); }
+.wf-node-compact.node-run-done    .wnc-box { border-color: #2f9e44; }
+.wf-node-compact.node-run-error   .wnc-box { border-color: #c92a2a; box-shadow: 0 0 0 3px rgba(201,42,42,0.18); }
+.wf-node-compact.node-run-skipped .wnc-box { opacity: 0.55; }
+.wnc-dot {
+  position: absolute; top: -5px; right: -5px;
+  width: 12px; height: 12px; border-radius: 999px;
+  border: 2px solid #fffefb;
+}
+.wnc-dot--running { background: #4dabf7; }
+.wnc-dot--done    { background: #2f9e44; }
+.wnc-dot--error   { background: #c92a2a; }
+.wnc-dot--skipped { background: #adb5bd; }
+/* ports: vertically centred on the icon box, grow on hover like the cards */
+.wf-node-compact .react-flow__handle { top: 36px; }
+.wf-node-compact:hover .react-flow__handle { box-shadow: 0 0 0 3px rgba(232, 147, 12, 0.22); }
+.wf-node-compact:hover .react-flow__handle-left,
+.wf-node-compact:hover .react-flow__handle-right { transform: translateY(-50%) scale(1.45); }

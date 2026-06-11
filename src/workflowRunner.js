@@ -454,6 +454,19 @@ export async function runWorkflow(workflow, options = {}) {
       ? folderContext
       : (parentOutputs.length === 1 ? parentOutputs[0] : parentOutputs);
 
+    // Pinned sample data (n8n-style): use the saved output instead of
+    // executing the node — keeps downstream debugging deterministic.
+    const pinnedData = workflow.pinnedData || {};
+    if (Object.prototype.hasOwnProperty.call(pinnedData, id)) {
+      results[id] = pinnedData[id];
+      const step = {
+        nodeId: id, label: node.label, toolId: node.toolId, status: "done", pinned: true,
+        preview: "Pinned data — node not executed", input: previousOutput, output: pinnedData[id], durationMs: 0,
+      };
+      run.steps.push(step); onStep?.(step); onNodeStatus?.(id, "done");
+      continue;
+    }
+
     onNodeStatus?.(id, "running");
     const stepStart = Date.now();
     const exec = EXECUTORS[node.toolId]
@@ -464,11 +477,11 @@ export async function runWorkflow(workflow, options = {}) {
       const r = await exec(node, { ...ctxBase, previousOutput });
       results[id] = r.output;
       if (r.halted) skipped.add(id); // downstream of a failed filter won't run
-      step = { nodeId: id, label: node.label, toolId: node.toolId, status: "done", preview: r.preview || "", output: r.output, branch: r.branch, durationMs: Date.now() - stepStart };
+      step = { nodeId: id, label: node.label, toolId: node.toolId, status: "done", preview: r.preview || "", input: previousOutput, output: r.output, branch: r.branch, durationMs: Date.now() - stepStart };
       onNodeStatus?.(id, "done");
     } catch (err) {
       if (err?.message === "Run aborted") { onNodeStatus?.(id, "idle"); break; }
-      step = { nodeId: id, label: node.label, toolId: node.toolId, status: "error", error: err.message, durationMs: Date.now() - stepStart };
+      step = { nodeId: id, label: node.label, toolId: node.toolId, status: "error", error: err.message, input: previousOutput, durationMs: Date.now() - stepStart };
       onNodeStatus?.(id, "error");
     }
     run.steps.push(step); onStep?.(step);
