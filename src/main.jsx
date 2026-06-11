@@ -9,7 +9,7 @@ import {
   getSmoothStepPath,
   Handle,
   MarkerType,
-
+  MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -59,20 +59,32 @@ const CATEGORY_META = {
 
 const NODE_TYPES = { workflowNode: WorkflowNode, workflowHeader: WorkflowHeaderNode, stickyNote: StickyNoteNode };
 
-// Smooth-step edge with a ✕ button at its midpoint (shown on hover) for quick
-// disconnection. `data.onDelete(id)` is injected per-edge in the App.
+// Smooth-step edge with midpoint controls: ＋ inserts a node into the
+// connection (data.onInsert), ✕ disconnects (data.onDelete). After a run,
+// data.runLabel shows the item count that flowed through (n8n-style).
 function DeletableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }) {
   const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       <EdgeLabelRenderer>
-        <button
-          className="edge-del"
-          style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}
-          onClick={(e) => { e.stopPropagation(); data?.onDelete?.(id); }}
-          title="Remove this connection"
-        >×</button>
+        <div className="edge-tools" style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>
+          {data?.runLabel != null && (
+            <span className={`edge-run-label${data.runError ? " edge-run-label--error" : ""}`}>{data.runLabel}</span>
+          )}
+          {data?.onInsert && (
+            <button
+              className="edge-add"
+              onClick={(e) => { e.stopPropagation(); data.onInsert(id); }}
+              title="Insert a node into this connection"
+            >+</button>
+          )}
+          <button
+            className="edge-del"
+            onClick={(e) => { e.stopPropagation(); data?.onDelete?.(id); }}
+            title="Remove this connection"
+          >×</button>
+        </div>
       </EdgeLabelRenderer>
     </>
   );
@@ -1599,7 +1611,7 @@ function CommandPalette({ onAddTool, onClose }) {
 
 // ─── Canvas floating toolbar ──────────────────────────────────────────────────
 
-function CanvasToolbar({ onAddNote, onFitView, onSearch, onTemplate, onImport }) {
+function CanvasToolbar({ onAddNote, onFitView, onSearch, onTemplate, onImport, onTidy }) {
   return (
     <div className="canvas-toolbar">
       <button className="ctb-btn" onClick={onTemplate} title="Start from template"><Sparkles size={15}/> Templates</button>
@@ -1607,6 +1619,7 @@ function CanvasToolbar({ onAddNote, onFitView, onSearch, onTemplate, onImport })
       <button className="ctb-btn" onClick={onSearch}   title="Search nodes (Ctrl+K)"><Search size={15}/> Add node</button>
       <button className="ctb-btn" onClick={onAddNote}  title="Add sticky note"><StickyNote size={15}/> Note</button>
       <div className="ctb-sep"/>
+      <button className="ctb-btn" onClick={onTidy}     title="Auto-arrange your added nodes by connection order"><SlidersHorizontal size={15}/> Tidy</button>
       <button className="ctb-btn" onClick={onFitView}  title="Fit all workflows in view"><Layers3 size={15}/> Fit view</button>
       <button className="ctb-btn" onClick={onImport}   title="Import workflow JSON"><Upload size={15}/> Import</button>
     </div>
@@ -1802,12 +1815,17 @@ function buildWorkflow(files, folderName, runState, customToolNodes = [], fileEd
 
   return {
     summary, nodes: [...nodes, ...customToolNodes],
-    edges: edgePairs.map(([source,target],i) => ({
-      id:`edge-${source}-${target}-${i}`, source, target, type:"smoothstep",
-      animated: (target==="agent"&&hasFiles) || target==="file-edits",
-      markerEnd:{ type:MarkerType.ArrowClosed, width:18, height:18 },
-      style:{ strokeWidth:2.3 },
-    })),
+    edges: edgePairs.map(([source,target],i) => {
+      // n8n-style: auxiliary connections feeding the AI agent are dashed,
+      // the main folder→scanner→router path stays solid.
+      const aux = (target==="agent" && source!=="router") || target==="file-edits";
+      return {
+        id:`edge-${source}-${target}-${i}`, source, target, type:"smoothstep",
+        animated: (target==="agent"&&hasFiles) || target==="file-edits",
+        markerEnd:{ type:MarkerType.ArrowClosed, width:18, height:18 },
+        style:{ strokeWidth:2.3, ...(aux ? { strokeDasharray:"7 5" } : {}) },
+      };
+    }),
   };
 }
 
@@ -4867,6 +4885,17 @@ function ResizableSides({ children, className = "" }) {
 // Must be ≥ max-height of .node-file-list header + scroll area (~28+200+padding = 240px).
 const FILE_LIST_SHIFT = 260;
 
+// MiniMap node colours keyed by node tone (matches the canvas node accents).
+const MINIMAP_TONES = {
+  trigger:"#e8930c", scanner:"#4dabf7", router:"#69db7c", agent:"#9775fa",
+  paper:"#f08c00", code:"#845ef7", media:"#22b8cf", data:"#51cf66", other:"#adb5bd",
+};
+function miniMapNodeColor(n) {
+  if (n.type === "stickyNote") return "#ffe066";
+  if (n.type === "workflowHeader") return "#d7d0c3";
+  return MINIMAP_TONES[n.data?.tone] || "#c8beb0";
+}
+
 function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasRef,
                      onNodeClick, onNodeDoubleClick, onConnect, onNodeDragStop, onDropTool, onNodesChange,
                      onDeleteEdges, onDeleteNodes }) {
@@ -4949,6 +4978,11 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
                  fitView fitViewOptions={{ padding:0.12 }} minZoom={0.12}>
         <Background color="#d7d0c3" gap={24} size={1.2} />
         <Controls position="bottom-left" />
+        <MiniMap
+          position="bottom-right" pannable zoomable
+          nodeColor={miniMapNodeColor} nodeStrokeWidth={3}
+          maskColor="rgba(46, 36, 25, 0.08)"
+        />
       </ReactFlow>
     </div>
   );
@@ -5121,6 +5155,7 @@ function App() {
   const [nodeConfigPanel, setNodeConfigPanel] = useState(null); // { nodeId, toolId, initial }
   const [showTemplates,  setShowTemplates]  = useState(false);
   const [showPalette,    setShowPalette]    = useState(false);
+  const [insertEdgeCtx,  setInsertEdgeCtx]  = useState(null); // {wfId, edgeId, source, target} — palette inserts into this connection
   const [showAIProvider, setShowAIProvider] = useState(false);
   const [workflowVars,   setWorkflowVars]   = useState({});
   const importFileRef = useRef(null);
@@ -5441,11 +5476,51 @@ function App() {
     [rawNodes, removeWorkflow, handleFileOpen, updateStickyText, updateStickyColor, deleteStickyNote, deleteToolNode, nodeRunStatus, simPlan, activeWorkflowId],
   );
 
-  // User-created edges (touching a tool/sticky node) get the deletable ✕ edge.
+  // ＋ on an edge: remember which connection to split, then open the palette.
+  const handleInsertOnEdge = useCallback((fullEdgeId) => {
+    const i = fullEdgeId.indexOf("|"); if (i < 0) return;
+    const wfId = fullEdgeId.slice(0, i), edgeId = fullEdgeId.slice(i + 1);
+    const wf = workflowList.find(w => w.id === wfId);
+    const edge = wf?.manualEdges.find(me => me.id === edgeId);
+    if (!edge) return;
+    setInsertEdgeCtx({ wfId, edgeId, source: edge.source, target: edge.target });
+    setShowPalette(true);
+  }, [workflowList]);
+
+  // Per-node result of the current/last run, for n8n-style edge labels:
+  // how many items flowed out of each node, and whether it errored.
+  const runEdgeInfo = useMemo(() => {
+    const m = {};
+    for (const s of (currentRun?.steps || [])) {
+      const o = s.output;
+      const count = Array.isArray(o) ? o.length
+        : Array.isArray(o?.files) ? o.files.length
+        : Array.isArray(o?.items) ? o.items.length
+        : typeof o?.rowCount === "number" ? o.rowCount
+        : typeof o?.totalRows === "number" ? o.totalRows
+        : o != null ? 1 : 0;
+      m[s.nodeId] = { status: s.status, count };
+    }
+    return m;
+  }, [currentRun]);
+
+  // User-created edges (touching a tool/sticky node) get the deletable ✕ edge,
+  // the ＋ insert button, and—after a run—item-count labels + status colour.
   const derivedEdgesUI = useMemo(() => derivedEdges.map(e => {
     const userEdge = e.source.includes("|tool-") || e.target.includes("|tool-") || e.source.includes("|sticky-") || e.target.includes("|sticky-");
-    return userEdge ? { ...e, type: "deletable", data: { ...e.data, onDelete: handleDeleteEdgeById } } : e;
-  }), [derivedEdges, handleDeleteEdgeById]);
+    if (!userEdge) return e;
+    const data = { ...e.data, onDelete: handleDeleteEdgeById, onInsert: handleInsertOnEdge };
+    let style = e.style;
+    if (e.source.startsWith(`${activeWorkflowId}|`)) {
+      const info = runEdgeInfo[e.source.slice(e.source.indexOf("|") + 1)];
+      if (info && info.status !== "skipped") {
+        data.runLabel = info.status === "error" ? "error" : `${info.count} item${info.count === 1 ? "" : "s"}`;
+        data.runError = info.status === "error";
+        style = { ...style, stroke: info.status === "error" ? "#c92a2a" : info.status === "done" ? "#2f9e44" : style?.stroke };
+      }
+    }
+    return { ...e, type: "deletable", data, style };
+  }), [derivedEdges, handleDeleteEdgeById, handleInsertOnEdge, runEdgeInfo, activeWorkflowId]);
 
   // ── folder scanning ───────────────────────────────────────────────────────
 
@@ -5666,6 +5741,64 @@ function App() {
       return { customToolNodes:[...w.customToolNodes, createToolNode(tool,{x:980,y:420+(seq%4)*80},seq)] };
     });
     setStatus({ type:"success", text:`Added "${tool.label}" to the active canvas.` });
+  }, [activeWorkflowId, updateWorkflow]);
+
+  // Insert a tool into an existing connection: A→B becomes A→new→B.
+  const addToolBetweenEdge = useCallback((tool) => {
+    const ctx = insertEdgeCtx; if (!ctx) return;
+    updateWorkflow(ctx.wfId, w => {
+      const seq = w.customToolNodes.length + 1;
+      const find = id => w.customToolNodes.find(n => n.id === id);
+      const a = find(ctx.source), b = find(ctx.target);
+      const pos = a && b ? { x:(a.position.x + b.position.x) / 2, y:(a.position.y + b.position.y) / 2 + 40 }
+        : a ? { x:a.position.x + 280, y:a.position.y }
+        : b ? { x:b.position.x - 280, y:b.position.y }
+        : { x:980, y:460 };
+      const node = createToolNode(tool, pos, seq);
+      return {
+        customToolNodes: [...w.customToolNodes, node],
+        manualEdges: [
+          ...w.manualEdges.filter(me => me.id !== ctx.edgeId),
+          mkEdge(ctx.source, node.id, 0),
+          mkEdge(node.id, ctx.target, 1),
+        ],
+      };
+    });
+    setInsertEdgeCtx(null);
+    setStatus({ type:"success", text:`Inserted "${tool.label}" into the connection.` });
+  }, [insertEdgeCtx, updateWorkflow]);
+
+  // Tidy: auto-layout the user-added nodes left→right by connection depth
+  // (longest-path layering over the manual edges), like n8n's "tidy up".
+  const tidyActiveWorkflow = useCallback(() => {
+    updateWorkflow(activeWorkflowId, w => {
+      if (!w.customToolNodes.length) return {};
+      const ids = new Set(w.customToolNodes.map(n => n.id));
+      const adj = {}, indeg = {};
+      for (const id of ids) { adj[id] = []; indeg[id] = 0; }
+      for (const e of w.manualEdges) {
+        if (ids.has(e.source) && ids.has(e.target)) { adj[e.source].push(e.target); indeg[e.target]++; }
+      }
+      const depth = {}, queue = [...ids].filter(id => indeg[id] === 0);
+      queue.forEach(id => { depth[id] = 0; });
+      const remaining = { ...indeg };
+      while (queue.length) {
+        const u = queue.shift();
+        for (const v of adj[u]) {
+          depth[v] = Math.max(depth[v] ?? 0, depth[u] + 1);
+          if (--remaining[v] === 0) queue.push(v);
+        }
+      }
+      const X0 = 380, Y0 = 470, DX = 300, DY = 130, rows = {};
+      return {
+        customToolNodes: w.customToolNodes.map(n => {
+          const d = depth[n.id] ?? 0;
+          const row = (rows[d] = (rows[d] ?? 0) + 1) - 1;
+          return { ...n, position: { x: X0 + d * DX, y: Y0 + row * DY } };
+        }),
+      };
+    });
+    setStatus({ type:"info", text:"Tidied the canvas layout." });
   }, [activeWorkflowId, updateWorkflow]);
 
   const clearCustomTools = useCallback(() => {
@@ -6189,6 +6322,7 @@ function App() {
           onSearch={() => setShowPalette(true)}
           onTemplate={() => setShowTemplates(true)}
           onImport={() => importFileRef.current?.click()}
+          onTidy={tidyActiveWorkflow}
         />
         <input ref={importFileRef} type="file" accept=".json" className="visually-hidden" onChange={handleImport} />
 
@@ -6366,8 +6500,11 @@ function App() {
 
       {showPalette && (
         <CommandPalette
-          onAddTool={(tool) => { addToolToCanvas(tool); setStatus({ type:"success", text:`Added "${tool.label}".`}); }}
-          onClose={() => setShowPalette(false)}
+          onAddTool={(tool) => {
+            if (insertEdgeCtx) addToolBetweenEdge(tool);
+            else { addToolToCanvas(tool); setStatus({ type:"success", text:`Added "${tool.label}".`}); }
+          }}
+          onClose={() => { setShowPalette(false); setInsertEdgeCtx(null); }}
         />
       )}
 
