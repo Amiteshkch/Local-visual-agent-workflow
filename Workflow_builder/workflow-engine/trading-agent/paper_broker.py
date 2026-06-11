@@ -21,7 +21,7 @@ import yfinance as yf
 BOOK_PATH = Path(__file__).parent / "paper_book.json"
 DEFAULT_STARTING_CASH = float(os.environ.get("PAPER_STARTING_CASH", "100000"))
 SPREAD_BPS = float(os.environ.get("PAPER_SPREAD_BPS", "5"))  # 5 bps each side if yf has no bid/ask
-_NY = ZoneInfo("America/New_York")
+_NSE = ZoneInfo("Asia/Kolkata")
 
 
 # ── Book persistence ──────────────────────────────────────────
@@ -176,17 +176,17 @@ def _mark_to_market_value(book: dict) -> float:
 def get_account() -> dict:
     book = _load_book()
     portfolio_value = _mark_to_market_value(book)
+    cost_basis = sum(
+        p["qty"] * p["avg_entry_price"] for p in book["positions"].values()
+    )
+    market_value = portfolio_value - book["cash"]
     return {
         "cash": book["cash"],
         "buying_power": book["cash"],   # paper: no margin
         "portfolio_value": portfolio_value,
         "starting_cash": book["starting_cash"],
         "realized_pnl": book["realized_pnl"],
-        "unrealized_pnl": round(portfolio_value - book["cash"] - sum(
-            p["qty"] * p["avg_entry_price"] for p in book["positions"].values()
-        ) + sum(
-            p["qty"] * p["avg_entry_price"] for p in book["positions"].values()
-        ), 2),
+        "unrealized_pnl": round(market_value - cost_basis, 2),
     }
 
 
@@ -213,6 +213,8 @@ def place_order(symbol: str, qty: int, side: str,
     qty = int(qty)
     if qty <= 0:
         return {"id": None, "status": "rejected", "reason": "qty must be > 0"}
+    if side not in ("buy", "sell"):
+        return {"id": None, "status": "rejected", "reason": "side must be buy or sell"}
 
     quote = get_quote(symbol)["quote"]
     if side == "buy":
@@ -225,33 +227,42 @@ def place_order(symbol: str, qty: int, side: str,
     book = _load_book()
     cost = qty * price
     pos = book["positions"].setdefault(symbol, {"qty": 0, "avg_entry_price": 0.0})
+    old_qty = pos["qty"]
 
     if side == "buy":
         if cost > book["cash"]:
             return {"id": None, "status": "rejected", "reason": f"insufficient cash (need ${cost:,.2f}, have ${book['cash']:,.2f})"}
-        new_qty = pos["qty"] + qty
-        if pos["qty"] >= 0:  # adding to long (or opening new)
-            total_cost = pos["qty"] * pos["avg_entry_price"] + cost
+        new_qty = old_qty + qty
+        if old_qty >= 0:  # adding to long (or opening new)
+            total_cost = old_qty * pos["avg_entry_price"] + cost
             pos["avg_entry_price"] = total_cost / new_qty if new_qty else 0
-        # else (covering short): realized P&L = (avg_short_price - fill_price) * min(qty, |pos.qty|)
         else:
-            cover_qty = min(qty, abs(pos["qty"]))
+            cover_qty = min(qty, abs(old_qty))
             realized = (pos["avg_entry_price"] - price) * cover_qty
             book["realized_pnl"] = round(book["realized_pnl"] + realized, 2)
+            if new_qty > 0:
+                pos["avg_entry_price"] = price
+            elif new_qty == 0:
+                pos["avg_entry_price"] = 0.0
         pos["qty"] = new_qty
         book["cash"] = round(book["cash"] - cost, 2)
 
     else:  # sell
         # close long or open short
-        if pos["qty"] > 0:
-            close_qty = min(qty, pos["qty"])
+        if old_qty > 0:
+            close_qty = min(qty, old_qty)
             realized = (price - pos["avg_entry_price"]) * close_qty
             book["realized_pnl"] = round(book["realized_pnl"] + realized, 2)
-        new_qty = pos["qty"] - qty
-        if new_qty < 0 and pos["qty"] <= 0:  # extending short
-            short_open = abs(new_qty) - abs(pos["qty"])
-            total = abs(pos["qty"]) * pos["avg_entry_price"] + short_open * price
-            pos["avg_entry_price"] = total / abs(new_qty) if new_qty else 0
+        new_qty = old_qty - qty
+        if new_qty < 0:
+            if old_qty > 0:
+                pos["avg_entry_price"] = price
+            else:  # extending short
+                short_open = abs(new_qty) - abs(old_qty)
+                total = abs(old_qty) * pos["avg_entry_price"] + short_open * price
+                pos["avg_entry_price"] = total / abs(new_qty) if new_qty else 0
+        elif new_qty == 0:
+            pos["avg_entry_price"] = 0.0
         pos["qty"] = new_qty
         book["cash"] = round(book["cash"] + qty * price, 2)
 
@@ -274,11 +285,11 @@ def place_order(symbol: str, qty: int, side: str,
 
 # ── Calendar ──────────────────────────────────────────────────
 def is_market_open() -> bool:
-    """NYSE regular hours: Mon-Fri 09:30-16:00 America/New_York.
+    """NSE regular hours: Mon-Fri 09:15-15:30 Asia/Kolkata.
 
-    Doesn't account for holidays — good enough for paper trading.
+    Doesn't account for exchange holidays — good enough for paper trading.
     """
-    now = datetime.now(_NY)
+    now = datetime.now(_NSE)
     if now.weekday() >= 5:
         return False
-    return dtime(9, 30) <= now.time() < dtime(16, 0)
+    return dtime(9, 15) <= now.time() < dtime(15, 30)

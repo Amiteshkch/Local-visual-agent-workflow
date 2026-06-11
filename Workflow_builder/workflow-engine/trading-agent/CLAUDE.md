@@ -1,6 +1,6 @@
 ## Routines
 
 ### trading-cycle
-Schedule: every 15 minutes on weekdays between 9:30 AM and 4:15 PM ET
+Schedule: every 15 minutes on weekdays between 9:15 AM and 3:30 PM Asia/Kolkata
 Command: python agent.py
-Description: Full trading cycle — research, decision, execution, journal
+Description: Full Nifty/NSE paper-trading cycle — research, decision, execution, journal

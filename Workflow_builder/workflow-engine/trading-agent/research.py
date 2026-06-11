@@ -1,7 +1,22 @@
+import os
+
 import numpy as np
 from broker import get_account, get_quote, get_bars, get_positions
 
-WATCHLIST = ["NVDA", "AAPL", "MSFT"]
+DEFAULT_WATCHLIST = [
+    "^NSEI",
+    "^NSEBANK",
+    "NIFTYBEES.NS",
+    "RELIANCE.NS",
+    "HDFCBANK.NS",
+    "ICICIBANK.NS",
+    "INFY.NS",
+]
+WATCHLIST = [
+    symbol.strip().upper()
+    for symbol in os.environ.get("WATCHLIST", ",".join(DEFAULT_WATCHLIST)).split(",")
+    if symbol.strip()
+]
 
 
 def compute_rsi(closes, period=14):
@@ -11,7 +26,7 @@ def compute_rsi(closes, period=14):
     avg_gain = np.mean(gains[-period:])
     avg_loss = np.mean(losses[-period:])
     rs = avg_gain / avg_loss if avg_loss != 0 else 100
-    return round(100 - (100 / (1 + rs)), 2)
+    return float(round(100 - (100 / (1 + rs)), 2))
 
 
 def build_market_data():
@@ -30,10 +45,10 @@ def build_market_data():
 
         watchlist_data.append({
             "symbol": symbol,
-            "price": quote.get("ap", closes[-1]),
-            "change_pct_1d": round((closes[-1] - closes[-2]) / closes[-2] * 100, 2),
+            "price": float(quote.get("ap") or closes[-1]),
+            "change_pct_1d": float(round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)),
             "rsi_14": compute_rsi(closes),
-            "above_20ma": closes[-1] > np.mean(closes[-20:]),
+            "above_20ma": bool(closes[-1] > np.mean(closes[-20:])),
             "current_position": positions.get(symbol),
         })
 
