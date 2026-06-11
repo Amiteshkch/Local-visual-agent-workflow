@@ -92,6 +92,16 @@ function DeletableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
 }
 const EDGE_TYPES = { deletable: DeletableEdge };
 
+// LLM provider "brand" icons — lucide-compatible signature (accepts `size`),
+// so they slot into the tool catalog / nodes like any other icon.
+const brandIcon = (glyph, color) => function BrandIcon({ size = 18 }) {
+  return <span className="brand-icon" style={{ fontSize: Math.round(size), ...(color ? { color } : {}) }}>{glyph}</span>;
+};
+const ClaudeIcon  = brandIcon("✳", "#d97757");  // Anthropic terracotta
+const ChatGPTIcon = brandIcon("⬡", "#10a37f");  // OpenAI green
+const GeminiIcon  = brandIcon("✦", "#4285f4");  // Google blue
+const OllamaIcon  = brandIcon("🦙");
+
 const TOOL_CATALOG = [
   // ── Triggers ──────────────────────────────────────────────────────────────
   { id: "trigger-manual",  label: "Manual Trigger",      category: "Triggers",   subtitle: "Start workflow on demand",            note: "Click 'Run' in the topbar to trigger this workflow manually. Good for on-demand data processing.", icon: Play,    tone: "trigger" },
@@ -122,6 +132,11 @@ const TOOL_CATALOG = [
   // ── AI ────────────────────────────────────────────────────────────────────
   { id: "claude-ai",       label: "Claude AI",           category: "AI",         subtitle: "Call Claude with a prompt + data",    note: "Sends a prompt to Claude (Haiku/Sonnet) with the previous node's output. Requires anthropicApiKey in /api/credentials.", icon: Bot, tone: "agent" },
   { id: "ai-suggest",      label: "AI Workflow Suggest", category: "AI",         subtitle: "Let Claude suggest next steps",       note: "Posts folder metadata to Claude and gets 3–5 tool suggestions for this dataset. Requires anthropicApiKey.", icon: Sparkles, tone: "agent" },
+  // ── AI Models (n8n-style provider nodes — drop into the flow) ─────────────
+  { id: "model-claude",  label: "Claude",  category: "AI Models", subtitle: "Anthropic model node",    note: "Place before an AI/agent node — every AI call after this point in the run uses Claude. Requires anthropicApiKey in the backend credentials.", icon: ClaudeIcon,  tone: "agent" },
+  { id: "model-gemini",  label: "Gemini",  category: "AI Models", subtitle: "Google model node",       note: "Place before an AI/agent node — every AI call after this point in the run uses Gemini. Requires geminiApiKey in the backend credentials.", icon: GeminiIcon,  tone: "agent" },
+  { id: "model-ollama",  label: "Ollama",  category: "AI Models", subtitle: "Local model node (free)", note: "Place before an AI/agent node — every AI call after this point in the run uses your local Ollama model. No API key needed.", icon: OllamaIcon, tone: "agent" },
+  { id: "model-chatgpt", label: "ChatGPT", category: "AI Models", subtitle: "OpenAI model node",       note: "Place before an AI/agent node — downstream AI calls request the OpenAI provider. The backend doesn't serve OpenAI yet, so calls fall back to the configured provider.", icon: ChatGPTIcon, tone: "agent" },
   // ── Synthesize ────────────────────────────────────────────────────────────
   { id: "report-writer",   label: "Report Writer",       category: "Synthesize", subtitle: "Generate downloadable markdown report", note: "Double-click → Generate → full structured report: overview, categories, extension breakdown, file listing. Download as .md.", icon: ClipboardList, tone: "paper" },
   // ── Output ────────────────────────────────────────────────────────────────
@@ -5250,6 +5265,14 @@ function App() {
     try { localStorage.setItem("las-node-style", next); } catch {}
     return next;
   }), []);
+  const [paletteView, setPaletteView] = useState(() => {     // "list" | "grid" — agent tools sidebar layout
+    try { return localStorage.getItem("las-palette-view") || "list"; } catch { return "list"; }
+  });
+  const togglePaletteView = useCallback(() => setPaletteView(v => {
+    const next = v === "list" ? "grid" : "list";
+    try { localStorage.setItem("las-palette-view", next); } catch {}
+    return next;
+  }), []);
   const [showAIProvider, setShowAIProvider] = useState(false);
   const [workflowVars,   setWorkflowVars]   = useState({});
   const importFileRef = useRef(null);
@@ -5624,6 +5647,10 @@ function App() {
     if (!userEdge) return e;
     const data = { ...e.data, onDelete: handleDeleteEdgeById, onInsert: handleInsertOnEdge };
     let style = e.style;
+    // n8n-style: connections to/from an LLM model node are dashed (aux link).
+    if (e.source.includes("|tool-model-") || e.target.includes("|tool-model-")) {
+      style = { ...style, strokeDasharray: "7 5" };
+    }
     if (e.source.startsWith(`${activeWorkflowId}|`)) {
       const info = runEdgeInfo[e.source.slice(e.source.indexOf("|") + 1)];
       if (info && info.status !== "skipped") {
@@ -6323,6 +6350,10 @@ function App() {
           <div className="palette-head">
             <div><strong>Agent tools</strong><small>Drag tools onto the canvas</small></div>
             <div className="palette-head-actions">
+              <button className="icon-button" type="button" onClick={togglePaletteView}
+                      title={paletteView === "grid" ? "Switch to detailed list" : "Switch to icon blocks (drag or click to add)"}>
+                {paletteView === "grid" ? "List" : "Blocks"}
+              </button>
               <button className="icon-button palette-new-btn" type="button" onClick={() => setCustomBuilder({ mode:"new" })} title="Create a custom AI agent tool"><Plus size={13}/> New</button>
               <button className="icon-button" type="button" onClick={clearCustomTools} disabled={!activeWorkflow.customToolNodes.length}>Clear</button>
             </div>
@@ -6331,20 +6362,37 @@ function App() {
             <Search size={15}/>
             <input value={toolSearch} onChange={e=>setToolSearch(e.target.value)} placeholder="Search tools"/>
           </label>
-          <div className="tool-list">
-            {filteredTools.map(tool=>(
-              <div className="tool-row" key={tool.id}>
-                <ToolPaletteItem tool={tool}/>
-                {tool.custom && tool.kind === "agent" && (
-                  <>
-                    <button className="tool-icon-btn" type="button" title="Edit tool" onClick={()=>setCustomBuilder({ mode:"editDef", def:tool })}><Pencil size={13}/></button>
-                    <button className="tool-icon-btn" type="button" title="Delete tool" onClick={()=>deleteCustomTool(tool.id)}><Trash2 size={13}/></button>
-                  </>
-                )}
-                <button className="add-tool-button" type="button" onClick={()=>addToolToCanvas(tool)}>Add</button>
-              </div>
-            ))}
-          </div>
+          {paletteView === "grid" ? (
+            <div className="tool-list tool-grid">
+              {filteredTools.map(tool => {
+                const Icon = tool.icon || Layers3;
+                return (
+                  <button key={tool.id} className="tool-tile" type="button" draggable
+                          onDragStart={e => { e.dataTransfer.setData("application/reactflow-tool", tool.id); e.dataTransfer.effectAllowed = "move"; }}
+                          onClick={() => addToolToCanvas(tool)}
+                          title={`${tool.label} — ${tool.subtitle}. Drag onto the canvas, or click to add.`}>
+                    <span className={`tool-icon tone-${tool.tone}`}><Icon size={20}/></span>
+                    <span className="tool-tile-label">{tool.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="tool-list">
+              {filteredTools.map(tool=>(
+                <div className="tool-row" key={tool.id}>
+                  <ToolPaletteItem tool={tool}/>
+                  {tool.custom && tool.kind === "agent" && (
+                    <>
+                      <button className="tool-icon-btn" type="button" title="Edit tool" onClick={()=>setCustomBuilder({ mode:"editDef", def:tool })}><Pencil size={13}/></button>
+                      <button className="tool-icon-btn" type="button" title="Delete tool" onClick={()=>deleteCustomTool(tool.id)}><Trash2 size={13}/></button>
+                    </>
+                  )}
+                  <button className="add-tool-button" type="button" onClick={()=>addToolToCanvas(tool)}>Add</button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="section-resize-handle" onMouseDown={paletteResizeDown} title="Drag to resize" />
         </section>
 

@@ -5197,3 +5197,39 @@ h1 {
 .wf-node-compact:hover .react-flow__handle { box-shadow: 0 0 0 3px rgba(232, 147, 12, 0.22); }
 .wf-node-compact:hover .react-flow__handle-left,
 .wf-node-compact:hover .react-flow__handle-right { transform: translateY(-50%) scale(1.45); }
+
+/* ── LLM brand icons (Claude / ChatGPT / Gemini / Ollama nodes) ───────────── */
+.brand-icon {
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1; font-style: normal;
+}
+
+/* ── agent tools palette: icon-blocks grid view ───────────────────────────── */
+.tool-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  gap: 8px; align-content: start;
+}
+.tool-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 9px 4px 7px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel); cursor: grab;
+  transition: border-color .12s, transform .12s, box-shadow .12s;
+}
+.tool-tile:hover {
+  border-color: var(--orange);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(21, 16, 10, 0.14);
+}
+.tool-tile:active { cursor: grabbing; }
+.tool-tile .tool-icon {
+  width: 36px; height: 36px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+}
+.tool-tile-label {
+  font-size: 10.5px; font-weight: 700; line-height: 1.2;
+  color: var(--ink); text-align: center;
+  max-width: 74px; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}

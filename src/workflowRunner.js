@@ -144,6 +144,20 @@ const CSV_EXTS = new Set([".csv", ".tsv"]);
 const TEXTY_EXTS = new Set([".pdf", ".docx", ".doc", ".txt", ".md", ".py", ".ipynb"]);
 const extOf = name => { const i = (name || "").lastIndexOf("."); return i > -1 ? name.slice(i).toLowerCase() : ""; };
 
+// Model nodes set the run-level AI provider; AI executors attach it to their
+// backend requests via aiProviderField (backend falls back to its configured
+// provider when the override is missing or unsupported).
+function modelNodeExecutor(provider) {
+  return async (_n, ctx) => {
+    ctx.setVar("__aiProvider", provider);
+    return { output: ctx.previousOutput ?? { provider }, preview: `AI provider for the rest of this run: ${provider}` };
+  };
+}
+function aiProviderField(ctx) {
+  const p = ctx.vars?.__aiProvider;
+  return p ? { provider: p } : {};
+}
+
 // ─── Per-node executors (keyed by TOOL_CATALOG id) ────────────────────────────
 // Each returns { output, preview, branch?, halted? }. `preview` is a short
 // human-readable string shown in the run console.
@@ -349,12 +363,19 @@ const EXECUTORS = {
   merge: async (_n, ctx) => ({ output: ctx.previousOutput, preview: "Merged upstream branches" }),
   wait:  async (node, ctx) => { const s = Math.min(300, Number(node.config.seconds) || 2); await delay(s * 1000, ctx.signal); return { output: ctx.previousOutput, preview: `Waited ${s}s` }; },
 
+  // n8n-style LLM model nodes: place one in the flow and every AI call after
+  // it (in topological order) uses that provider. Data passes straight through.
+  "model-claude":  modelNodeExecutor("claude"),
+  "model-gemini":  modelNodeExecutor("gemini"),
+  "model-ollama":  modelNodeExecutor("ollama"),
+  "model-chatgpt": modelNodeExecutor("openai"),
+
   "claude-ai": async (node, ctx) => {
     const prompt = interpolate(node.config.prompt || "Summarize the following data and suggest the next step.", ctx);
     const res = await fetch(`${ctx.backendUrl}/api/ai/task`, {
       method: "POST", signal: ctx.signal,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: `${prompt}\n\nDATA:\n${asText(ctx.previousOutput, 6000)}`, folderName: ctx.folderName, summary: ctx.summary, files: [], iterations: 1 }),
+      body: JSON.stringify({ task: `${prompt}\n\nDATA:\n${asText(ctx.previousOutput, 6000)}`, folderName: ctx.folderName, summary: ctx.summary, files: [], iterations: 1, ...aiProviderField(ctx) }),
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `AI request failed (${res.status})`); }
     const data = await res.json();
@@ -396,7 +417,7 @@ const EXECUTORS = {
     const res = await fetch(`${ctx.backendUrl}/api/ai/task`, {
       method: "POST", signal: ctx.signal,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task, folderName: ctx.folderName, summary: ctx.summary, files, iterations: 1 }),
+      body: JSON.stringify({ task, folderName: ctx.folderName, summary: ctx.summary, files, iterations: 1, ...aiProviderField(ctx) }),
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `Agent failed (${res.status})`); }
     const data = await res.json();

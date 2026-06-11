@@ -947,8 +947,13 @@ Rules:
 });
 
 app.post("/api/ai/task", async (req, res) => {
-  const { task = "", folderName = "Unnamed", summary = {}, files = [], iterations = 4, agents = [] } = req.body;
-  const credentials = await storage.getCredentials();
+  const { task = "", folderName = "Unnamed", summary = {}, files = [], iterations = 4, agents = [], provider } = req.body;
+  // Per-request provider override (set by a model node on the studio canvas);
+  // unsupported values fall back to the stored provider.
+  const storedCredentials = await storage.getCredentials();
+  const credentials = ["claude", "gemini", "ollama"].includes(provider)
+    ? { ...storedCredentials, aiProvider: provider }
+    : storedCredentials;
   const agentSpecs = normalizeAgentSpecs({ task, iterations, agents });
   if (!agentSpecs.length) return res.status(400).json({ error: "At least one task or agent task is required." });
 
