@@ -5067,6 +5067,10 @@ function ResizableSides({ children, className = "" }) {
 // Must be ≥ max-height of .node-file-list header + scroll area (~28+200+padding = 240px).
 const FILE_LIST_SHIFT = 260;
 
+// Fit-view never zooms below 0.6 — nodes stay readable to the naked eye;
+// pan (or zoom out manually, down to minZoom 0.12) to reach the rest.
+const FIT_VIEW_OPTS = { padding: 0.12, minZoom: 0.6, maxZoom: 1.25 };
+
 // MiniMap node colours keyed by node tone (matches the canvas node accents).
 const MINIMAP_TONES = {
   trigger:"#e8930c", scanner:"#4dabf7", router:"#69db7c", agent:"#9775fa",
@@ -5107,7 +5111,7 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
   useEffect(() => {
     if (workflowCount > prevCount.current) {
       prevCount.current = workflowCount;
-      setTimeout(() => fitView({ duration:500, padding:0.1 }), 80);
+      setTimeout(() => fitView({ duration:500, ...FIT_VIEW_OPTS }), 80);
     }
   }, [workflowCount, fitView]);
 
@@ -5165,9 +5169,9 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
                  deleteKeyCode={["Backspace","Delete"]}
                  onNodeMouseEnter={handleNodeMouseEnter}
                  onNodeMouseLeave={handleNodeMouseLeave}
-                 fitView fitViewOptions={{ padding:0.12 }} minZoom={0.12}>
+                 fitView fitViewOptions={FIT_VIEW_OPTS} minZoom={0.12}>
         <Background color="#d7d0c3" gap={24} size={1.2} />
-        <Controls position="bottom-left">
+        <Controls position="bottom-left" fitViewOptions={FIT_VIEW_OPTS}>
           <ControlButton onClick={toggleMiniMap}
             title={miniMapOn ? "Hide minimap" : "Show minimap"}
             className={miniMapOn ? "ctrl-minimap on" : "ctrl-minimap"}>
