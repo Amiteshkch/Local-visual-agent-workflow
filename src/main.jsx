@@ -6063,6 +6063,12 @@ function App() {
   }, [activeWorkflowId, updateWorkflow]);
 
   const clearCustomTools = useCallback(() => {
+    const count = activeWorkflow.customToolNodes.length;
+    // Clearing wipes every manually added tool — make sure it's intentional.
+    // Single nodes are removed via their hover ✕ or select + Delete.
+    if (count > 1 && !window.confirm(
+      `Remove all ${count} added tool nodes and their connections from this canvas?\n\n` +
+      "To delete just one, hover it and click its ✕ (or select it and press Delete).")) return;
     const ids = new Set(activeWorkflow.customToolNodes.map(n=>n.id));
     updateWorkflow(activeWorkflowId, w => ({
       customToolNodes:[], manualEdges:w.manualEdges.filter(e=>!ids.has(e.source)&&!ids.has(e.target)),
