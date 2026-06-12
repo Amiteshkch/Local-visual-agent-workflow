@@ -36,3 +36,12 @@ else:
 
 def kind() -> str:
     return _KIND
+
+
+def has_alpaca_keys() -> bool:
+    """True iff both Alpaca creds are set in the environment.
+
+    Used by /api/shadow/compare to decide whether to run the parallel
+    Alpaca-paper leg alongside the local paper broker.
+    """
+    return bool(os.environ.get("ALPACA_API_KEY")) and bool(os.environ.get("ALPACA_API_SECRET"))
