@@ -5372,6 +5372,16 @@ function App() {
     try { localStorage.setItem("las-palette-view", next); } catch {}
     return next;
   }), []);
+  // Top band (title + stats + Run + categories + canvas toolbar) auto-hides
+  // like the bottom dock: cursor at the top edge slides it down over the
+  // canvas, leaving slides it away — frees vertical space for the canvas.
+  const [topShow, setTopShow] = useState(false);
+  const topBandRef = useRef(null);
+  const hideTopBand = (e) => {
+    const to = e.relatedTarget;
+    if (to instanceof Node && topBandRef.current?.contains(to)) return;
+    setTopShow(false);
+  };
   const [showAIProvider, setShowAIProvider] = useState(false);
   const [workflowVars,   setWorkflowVars]   = useState({});
   const importFileRef = useRef(null);
@@ -6508,6 +6518,15 @@ function App() {
            title="Drag to resize sidebar" />
 
       <section className="workspace" aria-label="Generated workflow workspace">
+        <div ref={topBandRef}>
+        <div className="top-hotzone" onMouseEnter={() => setTopShow(true)} onMouseLeave={hideTopBand} />
+        {!topShow && (
+          <button type="button" className="top-peek" onMouseEnter={() => setTopShow(true)}
+                  title="Show workflow controls">
+            <ChevronDown size={13}/>
+          </button>
+        )}
+        <div className={`top-band${topShow ? " top-band--show" : ""}`} onMouseLeave={hideTopBand}>
         <header className="topbar">
           <div>
             <p className="eyebrow">n8n-inspired local workflow</p>
@@ -6563,6 +6582,8 @@ function App() {
           nodeStyle={nodeStyle}
           onToggleNodeStyle={toggleNodeStyle}
         />
+        </div>
+        </div>
         <input ref={importFileRef} type="file" accept=".json" className="visually-hidden" onChange={handleImport} />
 
         <ReactFlowProvider>

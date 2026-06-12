@@ -835,8 +835,9 @@ h1 {
 }
 
 .canvas-frame {
-  position: relative; /* anchors the floating bottom dock */
-  height: min(68vh, 700px);
+  position: relative;
+  /* the top band is an auto-hidden overlay, so the canvas owns the height */
+  height: min(86vh, 1000px);
   min-height: 520px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -5253,6 +5254,38 @@ h1 {
 .bottom-dock--show { transform: translate(-50%, 0); pointer-events: auto; }
 .bottom-dock .dock-btn { background: rgba(255, 254, 251, 0.97); box-shadow: 0 6px 18px rgba(21, 16, 10, 0.16); }
 .sidebar-dock { position: relative; flex: none; }
+
+/* ── top band (title / stats / Run / categories / toolbar) auto-hide ──────── */
+.top-hotzone {
+  position: fixed; top: 0; left: 0; right: 0; height: 12px;
+  z-index: 109;
+}
+.top-band {
+  position: fixed; top: 0; left: 0; right: 0;
+  z-index: 110;
+  padding: 10px 22px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 12px 30px rgba(21, 16, 10, 0.18);
+  transform: translateY(-105%);
+  transition: transform .2s ease-out;
+  pointer-events: none;
+}
+.top-band--show { transform: translateY(0); pointer-events: auto; }
+.top-band .topbar { margin-bottom: 8px; }
+.top-band .canvas-toolbar { margin: 6px 0 0; }
+/* small always-visible tab hinting at the hidden controls */
+.top-peek {
+  position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+  z-index: 108;
+  width: 46px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; border: 1px solid var(--line); border-top: none;
+  border-radius: 0 0 9px 9px;
+  background: var(--panel); color: var(--muted);
+  cursor: default; opacity: 0.85;
+}
+.top-peek:hover { color: var(--ink); border-color: var(--orange); }
 .dock-row { display: flex; gap: 6px; }
 .dock-btn {
   flex: 1; min-width: 0;
