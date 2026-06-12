@@ -5042,7 +5042,8 @@ h1 {
   border: 1px solid var(--line); box-shadow: 0 2px 6px rgba(21,16,10,0.2);
   cursor: pointer; opacity: 0; transition: opacity .12s, background .12s, color .12s;
 }
-.workflow-node:hover .node-del { opacity: 1; }
+.workflow-node:hover .node-del,
+.wf-node-compact:hover .node-del { opacity: 1; }
 .node-del:hover { background: var(--orange-dark); color: #fff; border-color: var(--orange-dark); }
 
 /* ── Suggest panel additions ──────────────────────────────────────────────── */
@@ -5086,10 +5087,11 @@ h1 {
   background: var(--panel); color: var(--orange-dark);
   border: 1px solid var(--line); box-shadow: 0 2px 6px rgba(21,16,10,0.2);
   font-size: 14px; line-height: 1; cursor: pointer;
-  opacity: 0.18; transition: opacity .12s, background .12s, color .12s;
+  opacity: 0.5; transition: opacity .12s, background .12s, color .12s;
 }
 .edge-add { color: #2b8a3e; }
-.edge-tools:hover .edge-del, .edge-tools:hover .edge-add { opacity: 1; }
+.edge-tools:hover .edge-del, .edge-tools:hover .edge-add,
+.edge-tools--hov .edge-del, .edge-tools--hov .edge-add { opacity: 1; }
 .edge-del:hover { background: var(--orange-dark); color: #fff; border-color: var(--orange-dark); }
 .edge-add:hover { background: #2b8a3e; color: #fff; border-color: #2b8a3e; }
 

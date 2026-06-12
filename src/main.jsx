@@ -65,11 +65,19 @@ const NODE_TYPES = { workflowNode: WorkflowNode, workflowHeader: WorkflowHeaderN
 // data.runLabel shows the item count that flowed through (n8n-style).
 function DeletableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, data }) {
   const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  // The midpoint buttons live in a portal outside the edge's DOM element, so
+  // CSS :hover on the edge can't reach them — track hover ourselves via an
+  // invisible wide path along the connection.
+  const [hovered, setHovered] = useState(false);
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
+      <path d={path} fill="none" stroke="transparent" strokeWidth={20} style={{ pointerEvents: "stroke" }}
+            onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} />
       <EdgeLabelRenderer>
-        <div className="edge-tools" style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>
+        <div className={`edge-tools${hovered ? " edge-tools--hov" : ""}`}
+             onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+             style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)` }}>
           {data?.runLabel != null && (
             <span className={`edge-run-label${data.runError ? " edge-run-label--error" : ""}`}>{data.runLabel}</span>
           )}
@@ -6563,9 +6571,9 @@ function App() {
               className={`button secondary exec-log-toggle${showDashboard?" exec-log-toggle--active":""}`}
               type="button"
               onClick={() => setShowDashboard(v => !v)}
-              title="Toggle execution log"
+              title="Past runs of every workflow — status, duration, per-step detail (like n8n's Executions)"
             >
-              <Activity size={16}/> {showDashboard ? "Hide Log" : "Exec Log"}
+              <Activity size={16}/> {showDashboard ? "Hide Executions" : "Executions"}
             </button>
           </div>
         </header>
