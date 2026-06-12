@@ -1774,6 +1774,28 @@ function SidebarDock({ topExtensionsText, variables, onVarsChange }) {
   );
 }
 
+// Windows-taskbar-style auto-hide wrapper: the dock band stays hidden below
+// the viewport; moving the cursor to the bottom edge of the window slides it
+// up, and it slides away when the cursor leaves (unless an input is focused).
+function BottomDock(props) {
+  const [show, setShow] = useState(false);
+  const wrapRef = useRef(null);
+  const hide = (e) => {
+    const to = e.relatedTarget;
+    if (to instanceof Node && wrapRef.current?.contains(to)) return; // moving between hotzone and band
+    if (wrapRef.current?.contains(document.activeElement)) return;   // editing a variable
+    setShow(false);
+  };
+  return (
+    <div ref={wrapRef}>
+      <div className="dock-hotzone" onMouseEnter={() => setShow(true)} onMouseLeave={hide} />
+      <div className={`bottom-dock${show ? " bottom-dock--show" : ""}`} onMouseLeave={hide}>
+        <SidebarDock {...props} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Sticky note node ─────────────────────────────────────────────────────────
 
 function StickyNoteNode({ data, id }) {
@@ -5058,7 +5080,7 @@ function miniMapNodeColor(n) {
 
 function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasRef,
                      onNodeClick, onNodeDoubleClick, onConnect, onNodeDragStop, onDropTool, onNodesChange,
-                     onDeleteEdges, onDeleteNodes, dock }) {
+                     onDeleteEdges, onDeleteNodes }) {
   const { screenToFlowPosition, fitView } = useReactFlow();
   // Minimap can be collapsed via the controls button; choice persists.
   const [miniMapOn, setMiniMapOn] = useState(() => {
@@ -5160,7 +5182,6 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
           />
         )}
       </ReactFlow>
-      {dock && <div className="canvas-dock">{dock}</div>}
     </div>
   );
 }
@@ -6555,7 +6576,6 @@ function App() {
             onNodeDragStop={handleNodeDragStop} onDropTool={handleDropTool}
             onNodesChange={()=>{}} onEdgesChange={()=>{}}
             onDeleteEdges={handleDeleteEdges} onDeleteNodes={handleDeleteNodes}
-            dock={<SidebarDock topExtensionsText={topExtensionsText} variables={workflowVars} onVarsChange={setWorkflowVars} />}
           />
         </ReactFlowProvider>
 
@@ -6716,6 +6736,8 @@ function App() {
           onClose={() => setShowTemplates(false)}
         />
       )}
+
+      <BottomDock topExtensionsText={topExtensionsText} variables={workflowVars} onVarsChange={setWorkflowVars} />
 
       {showPalette && (
         <CommandPalette

@@ -5235,14 +5235,23 @@ h1 {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
 
-/* ── canvas bottom dock (Privacy / Rules / Variables as hover icons) ──────── */
-.canvas-dock {
-  position: absolute; bottom: 10px; left: 50%;
-  transform: translateX(-50%);
-  width: min(380px, 55%);
-  z-index: 9;
+/* ── window bottom dock (Privacy / Rules / Variables, taskbar auto-hide) ──── */
+/* Invisible strip along the bottom edge of the window: hovering it reveals
+   the dock band; leaving the band hides it again, like an auto-hidden taskbar. */
+.dock-hotzone {
+  position: fixed; left: 0; right: 0; bottom: 0; height: 12px;
+  z-index: 119;
 }
-.canvas-dock .dock-btn { background: rgba(255, 254, 251, 0.95); box-shadow: 0 4px 12px rgba(21, 16, 10, 0.10); }
+.bottom-dock {
+  position: fixed; left: 50%; bottom: 6px;
+  width: min(420px, 60vw);
+  z-index: 120;
+  transform: translate(-50%, calc(100% + 14px));
+  transition: transform .18s ease-out;
+  pointer-events: none;
+}
+.bottom-dock--show { transform: translate(-50%, 0); pointer-events: auto; }
+.bottom-dock .dock-btn { background: rgba(255, 254, 251, 0.97); box-shadow: 0 6px 18px rgba(21, 16, 10, 0.16); }
 .sidebar-dock { position: relative; flex: none; }
 .dock-row { display: flex; gap: 6px; }
 .dock-btn {
