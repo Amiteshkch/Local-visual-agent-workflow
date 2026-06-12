@@ -5058,7 +5058,7 @@ function miniMapNodeColor(n) {
 
 function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasRef,
                      onNodeClick, onNodeDoubleClick, onConnect, onNodeDragStop, onDropTool, onNodesChange,
-                     onDeleteEdges, onDeleteNodes }) {
+                     onDeleteEdges, onDeleteNodes, dock }) {
   const { screenToFlowPosition, fitView } = useReactFlow();
   // Minimap can be collapsed via the controls button; choice persists.
   const [miniMapOn, setMiniMapOn] = useState(() => {
@@ -5160,6 +5160,7 @@ function AppCanvas({ derivedNodes, derivedEdges, workflowCount, canvasH, canvasR
           />
         )}
       </ReactFlow>
+      {dock && <div className="canvas-dock">{dock}</div>}
     </div>
   );
 }
@@ -6473,7 +6474,6 @@ function App() {
           <div className="section-resize-handle" onMouseDown={paletteResizeDown} title="Drag to resize" />
         </section>
 
-        <SidebarDock topExtensionsText={topExtensionsText} variables={workflowVars} onVarsChange={setWorkflowVars} />
 
         <div className={`status status-${status.type}`} role="status">
           {status.type==="success"?<CheckCircle2 size={17}/>:status.type==="error"?<XCircle size={17}/>:<Info size={17}/>}
@@ -6555,6 +6555,7 @@ function App() {
             onNodeDragStop={handleNodeDragStop} onDropTool={handleDropTool}
             onNodesChange={()=>{}} onEdgesChange={()=>{}}
             onDeleteEdges={handleDeleteEdges} onDeleteNodes={handleDeleteNodes}
+            dock={<SidebarDock topExtensionsText={topExtensionsText} variables={workflowVars} onVarsChange={setWorkflowVars} />}
           />
         </ReactFlowProvider>
 
