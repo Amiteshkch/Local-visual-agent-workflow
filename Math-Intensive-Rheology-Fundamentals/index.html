@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#07060f" />
+    <title>Math-Intensive Rheology — Library Atlas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="data/knowledge.js"></script>
+    <script defer src="library.js"></script>
+  </head>
+  <body>
+    <main class="lib-shell">
+      <header class="lib-top">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64" role="img">
+              <path d="M13 39c14-1 14-22 23-22 7 0 5 12 1 18 8-4 15-3 15 4 0 8-12 8-19 3-6 8-16 8-20-3Z" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M48 11v10M43 16h10" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div>
+            <h1>Library Atlas</h1>
+            <p>Mathematics &amp; concepts extracted from your PDFs</p>
+          </div>
+        </div>
+        <div class="lib-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3m2.3-5.2a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+          <input id="paperSearch" type="search" placeholder="Search papers, sectors, math…" />
+        </div>
+        <div class="lib-stats" id="libStats"></div>
+      </header>
+
+      <div class="lib-body">
+        <aside class="lib-sidebar">
+          <div class="sidebar-title">Sectors</div>
+          <div id="sectorList" class="sector-list"></div>
+        </aside>
+
+        <section class="lib-main" id="paperDetail">
+          <div class="detail-empty">Select a paper from the left to see the mathematics it uses and the concept behind the work.</div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

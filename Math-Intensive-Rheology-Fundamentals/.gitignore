@@ -1,0 +1,19 @@
+.DS_Store
+node_modules/
+dist/
+.env
+
+# rendered equation crops (regenerate via tools/extract_knowledge.py)
+data/eq/
+
+# single-PDF upload workspace (uploaded files + rendered crops)
+uploads/
+
+# generated NotebookLM/Drive export files
+notebooklm_exports/
+
+# python bytecode cache
+__pycache__/
+*.pyc
+
+# brainstorming/design specs are tracked, but local agent scratch is not
