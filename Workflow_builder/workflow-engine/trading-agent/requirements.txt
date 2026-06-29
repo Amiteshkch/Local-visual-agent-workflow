@@ -3,4 +3,6 @@ numpy
 python-dotenv
 flask
 google-genai
+yfinance
+anthropic
 # ollama   # uncomment if using local Ollama instead of Gemini
