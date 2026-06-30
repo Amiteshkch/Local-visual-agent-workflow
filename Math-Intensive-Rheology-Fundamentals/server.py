@@ -205,6 +205,17 @@ def notebooklm_markdown(pid, include_web_refs=True):
     nodes = flow.get("nodes") or []
     edges = flow.get("edges") or []
     if nodes and edges:
+        out += ["```mermaid", "graph TD"]
+        for i, n in enumerate(nodes[:250], 1):
+            label = md_clean(n.get("label") or f"Eq {i}").replace('"', "'")[:80]
+            out.append(f'  E{i}["{label}"]')
+        for edge in edges[:500]:
+            if edge.get("from") == edge.get("to"):
+                continue
+            if edge.get("from", -1) < 250 and edge.get("to", -1) < 250:
+                why = md_clean(edge.get("why") or "depends").replace('"', "'")[:60]
+                out.append(f'  E{edge.get("from") + 1} -->|{why}| E{edge.get("to") + 1}')
+        out += ["```", "", "### Flow Edge List", ""]
         for edge in edges[:500]:
             src = nodes[edge.get("from", -1)] if isinstance(edge.get("from"), int) and 0 <= edge.get("from") < len(nodes) else {}
             dst = nodes[edge.get("to", -1)] if isinstance(edge.get("to"), int) and 0 <= edge.get("to") < len(nodes) else {}
@@ -285,6 +296,76 @@ def write_obsidian_note(vault_path, folder, title, markdown, create_vault=False)
         fh.write(md_clean(markdown) + "\n")
     note_rel = os.path.relpath(out_path, vault)
     return out_path, note_rel, obsidian_uri(vault, note_rel)
+
+
+def safe_asset_name(name):
+    base = os.path.basename(name or "")
+    base = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-._")
+    return base[:90] or "asset.txt"
+
+
+def write_obsidian_assets(note_path, assets):
+    if not assets:
+        return []
+    note_dir = os.path.dirname(note_path)
+    asset_dir = os.path.join(note_dir, "assets")
+    os.makedirs(asset_dir, exist_ok=True)
+    written = []
+    for asset in assets:
+        name = safe_asset_name(asset.get("filename"))
+        content = asset.get("content") or ""
+        if not content:
+            continue
+        path = os.path.join(asset_dir, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        written.append(path)
+    return written
+
+
+def find_obsidian_vaults(limit=20):
+    env_vault = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+    roots = [
+        (os.path.expanduser("~/Documents"), 3),
+        (os.path.expanduser("~/Desktop"), 2),
+        (os.path.expanduser("~/Library/Mobile Documents/iCloud~md~obsidian/Documents"), 2),
+        (os.path.expanduser("~/Library/CloudStorage/GoogleDrive-amitesh18iisc@gmail.com/My Drive"), 1),
+    ]
+    found = []
+    seen = set()
+    if env_vault and os.path.isdir(os.path.join(os.path.expanduser(env_vault), ".obsidian")):
+        found.append(os.path.abspath(os.path.expanduser(env_vault)))
+        seen.add(found[-1])
+    deadline = time.time() + 2.0
+
+    def visit(path, depth):
+        if time.time() > deadline or len(found) >= limit:
+            return
+        path = os.path.abspath(os.path.expanduser(path))
+        if not os.path.isdir(path):
+            return
+        if os.path.isdir(os.path.join(path, ".obsidian")):
+            if path not in seen:
+                seen.add(path)
+                found.append(path)
+            return
+        if depth <= 0:
+            return
+        try:
+            with os.scandir(path) as it:
+                children = [e.path for e in it if e.is_dir(follow_symlinks=False) and not e.name.startswith(".")]
+        except Exception:
+            return
+        for child in children[:80]:
+            visit(child, depth - 1)
+
+    for root, depth in roots:
+        if not os.path.isdir(root):
+            continue
+        visit(root, depth)
+        if time.time() > deadline or len(found) >= limit:
+            break
+    return found
 
 
 # ── library groups (ordered names; persisted in LIB_DIR/groups.json) ─────────
@@ -1020,9 +1101,38 @@ def obsidian_export():
             body.get("markdown") or "",
             bool(body.get("createVault")),
         )
+        assets = write_obsidian_assets(out_path, body.get("assets") or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 400
-    return jsonify({"ok": True, "path": out_path, "notePath": note_rel, "obsidianUri": uri})
+    return jsonify({"ok": True, "path": out_path, "notePath": note_rel, "obsidianUri": uri, "assets": assets})
+
+
+@app.route("/api/obsidian/vaults")
+def obsidian_vaults():
+    return jsonify({"vaults": find_obsidian_vaults()})
+
+
+@app.route("/api/obsidian/choose-vault", methods=["POST"])
+def obsidian_choose_vault():
+    if sys.platform != "darwin":
+        return jsonify({"error": "Native folder picker is currently implemented for macOS only. Paste the vault path or use saved vaults."}), 400
+    script = (
+        'set chosenFolder to choose folder with prompt "Choose an Obsidian vault folder"\n'
+        'POSIX path of chosenFolder'
+    )
+    try:
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Folder picker timed out."}), 408
+    except Exception as e:
+        return jsonify({"error": f"Could not open folder picker: {e}"}), 500
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout or "Folder selection cancelled.").strip()
+        return jsonify({"error": msg}), 400
+    path = (r.stdout or "").strip().rstrip("/")
+    if not path:
+        return jsonify({"error": "No folder selected."}), 400
+    return jsonify({"ok": True, "path": path})
 
 
 @app.route("/api/groups", methods=["POST"])

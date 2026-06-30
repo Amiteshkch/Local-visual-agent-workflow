@@ -274,9 +274,18 @@
       <details class="obsidian-panel">
         <summary>Export to Obsidian</summary>
         <div class="obsidian-grid">
-          <label>vault path
-            <input id="obsVaultPath" type="text" placeholder="/Users/you/Documents/Obsidian Vault" value="${esc(localStorage.getItem("wb-obs-vault") || "")}" />
-          </label>
+          <div class="obsidian-field">
+            <span>vault path</span>
+            <div class="obsidian-vault-picker">
+              <input id="obsVaultPath" list="obsVaultOptions" type="text" placeholder="/Users/you/Documents/Obsidian Vault" value="${esc(localStorage.getItem("wb-obs-vault") || "")}" />
+              <datalist id="obsVaultOptions">${obsVaults().map((v) => `<option value="${esc(v)}"></option>`).join("")}</datalist>
+              <select id="obsVaultSelect" title="saved vault paths">
+                <option value="">Saved vaults</option>
+                ${obsVaults().map((v) => `<option value="${esc(v)}">${esc(v.split(/[\\/]/).filter(Boolean).pop() || v)}</option>`).join("")}
+              </select>
+              <button type="button" class="obsidian-folder-btn" id="obsChooseVault" title="choose a folder if your browser supports it">Choose folder</button>
+            </div>
+          </div>
           <label>project folder
             <input id="obsFolder" type="text" value="Derivation Workbench/${esc((p.title || "Paper").replace(/\.pdf$/i, ""))}" />
           </label>
@@ -381,6 +390,16 @@
     if (wrb) wrb.addEventListener("click", fetchWebRefs);
     const nlb = host.querySelector("#notebookLmBtn");
     if (nlb) nlb.addEventListener("click", exportNotebookLmSource);
+    const op = host.querySelector(".obsidian-panel");
+    if (op) op.addEventListener("click", (e) => {
+      if (e.target && e.target.id === "obsChooseVault") chooseObsidianVault();
+    });
+    const ovs = host.querySelector("#obsVaultSelect");
+    if (ovs) ovs.addEventListener("change", () => {
+      const inp = host.querySelector("#obsVaultPath");
+      if (ovs.value && inp) inp.value = ovs.value;
+    });
+    loadObsidianVaultCandidates();
     host.querySelectorAll("[data-obs-export]").forEach((b) =>
       b.addEventListener("click", () => exportObsidian(b.dataset.obsExport, b)));
     const bfb = host.querySelector("#buildFlowBtn");
@@ -420,6 +439,29 @@
 
   const mdEsc = (s) => String(s == null ? "" : s).replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   const mdTitle = () => ((DATA && DATA.paper && DATA.paper.title) || "Derivation Workbench").replace(/\.pdf$/i, "");
+  const obsVaults = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("wb-obs-vaults") || "[]");
+      const last = localStorage.getItem("wb-obs-vault") || "";
+      return [last, ...saved].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).slice(0, 8);
+    } catch (e) { return []; }
+  };
+  const saveObsVault = (vault) => {
+    if (!vault) return;
+    try {
+      const next = [vault, ...obsVaults().filter((v) => v !== vault)].slice(0, 8);
+      localStorage.setItem("wb-obs-vault", vault);
+      localStorage.setItem("wb-obs-vaults", JSON.stringify(next));
+    } catch (e) {}
+  };
+  function refreshObsVaultSelect() {
+    const sel = document.getElementById("obsVaultSelect");
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">Saved vaults</option>` +
+      obsVaults().map((v) => `<option value="${esc(v)}">${esc(v.split(/[\\/]/).filter(Boolean).pop() || v)}</option>`).join("");
+    sel.value = cur;
+  }
   const obsRange = () => {
     const from = Math.max(1, parseInt(document.getElementById("obsEqFrom")?.value, 10) || 1);
     const to = Math.max(from, parseInt(document.getElementById("obsEqTo")?.value, 10) || from);
@@ -427,13 +469,47 @@
   };
   const inRange = (seq, range) => seq >= range.from && seq <= range.to;
   const shortNode = (s) => mdEsc(s).replace(/\s+/g, " ").replaceAll('"', "'").slice(0, 76);
+  const xmlEsc = (s) => String(s == null ? "" : s)
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+
+  function graphSvgAsset() {
+    const flow = DATA.paper.flow || {};
+    const nodes = flow.nodes || [];
+    const edges = flow.edges || [];
+    if (!nodes.length || !NET || !NET.pos || !NET.radius) return null;
+    const width = Math.max(900, Math.ceil(Math.max(...NET.pos.map((p, i) => p.x + (NET.radius[i] || 20))) + 80));
+    const height = Math.max(520, Math.ceil(Math.max(...NET.pos.map((p, i) => p.y + (NET.radius[i] || 20))) + 80));
+    const paths = edges.filter((e) => e.from !== e.to).map((e) => {
+      const d = netEdgePath(e.from, e.to);
+      return `<path d="${xmlEsc(d)}" fill="none" stroke="#64748b" stroke-width="1.4" marker-end="url(#arrow)"><title>${xmlEsc(e.why || "")}</title></path>`;
+    }).join("\n");
+    const dots = nodes.map((n, i) => {
+      const p = NET.pos[i], r = NET.radius[i] || 18;
+      const label = shortNode(n.label || ("Eq " + (i + 1)));
+      return `<g>
+        <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r.toFixed(1)}" fill="#eef2ff" stroke="#6366f1" stroke-width="1.8"/>
+        <text x="${p.x.toFixed(1)}" y="${(p.y + 4).toFixed(1)}" text-anchor="middle" font-size="10" font-family="Inter, Arial, sans-serif" fill="#111827">${xmlEsc("Eq " + (i + 1))}</text>
+        <text x="${p.x.toFixed(1)}" y="${(p.y + r + 14).toFixed(1)}" text-anchor="middle" font-size="9" font-family="Inter, Arial, sans-serif" fill="#475569">${xmlEsc(label)}</text>
+      </g>`;
+    }).join("\n");
+    return {
+      filename: "derivation-graph.svg",
+      content: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>
+  <rect width="100%" height="100%" fill="#ffffff"/>
+  <text x="24" y="32" font-size="18" font-weight="700" font-family="Inter, Arial, sans-serif" fill="#111827">${xmlEsc(mdTitle())}</text>
+  <g transform="translate(0,44)">${paths}\n${dots}</g>
+</svg>`
+    };
+  }
 
   function obsidianGraphMd() {
     const flow = DATA.paper.flow || {};
     const nodes = flow.nodes || [];
     const edges = flow.edges || [];
     if (!nodes.length || !edges.length) return "No derivation graph has been built yet.";
-    const lines = ["```mermaid", "graph TD"];
+    const lines = ["![[assets/derivation-graph.svg]]", "", "```mermaid", "graph TD"];
     nodes.forEach((n, i) => lines.push(`  E${i + 1}["${shortNode(n.label || ("Eq " + (i + 1)))}"]`));
     edges.forEach((e) => {
       if (e.from === e.to) return;
@@ -476,21 +552,71 @@
     return head + "\n" + sections.map(([h, body]) => `# ${h}\n\n${body}`).join("\n\n");
   }
 
+  async function chooseObsidianVault() {
+    const status = document.getElementById("obsidianStatus");
+    const input = document.getElementById("obsVaultPath");
+    if (!input) return;
+    status.innerHTML = `<div class="up-busy"><span class="spinner spinner-sm"></span> Opening folder picker...</div>`;
+    try {
+      const r = await fetch("/api/obsidian/choose-vault", { method: "POST" });
+      const j = await r.json();
+      if (r.ok && j.path) {
+        input.value = j.path;
+        saveObsVault(j.path);
+        refreshObsVaultSelect();
+        status.innerHTML = `<div class="up-ok">Selected vault: <code>${esc(j.path)}</code></div>`;
+        return;
+      }
+      throw new Error(j.error || "Native folder picker unavailable.");
+    } catch (serverErr) {
+      status.innerHTML = `<div class="up-err">${esc(serverErr.message)} Paste the vault path manually, or choose from Saved vaults.</div>`;
+    }
+    if (!window.showDirectoryPicker) {
+      input.focus();
+      return;
+    }
+    try {
+      const dir = await window.showDirectoryPicker({ mode: "readwrite" });
+      const picked = dir.name || "";
+      if (picked && !input.value.trim()) input.value = picked;
+      status.innerHTML = `<div class="up-err">Browser folder picker selected “${esc(picked)}”, but it does not expose the full local path to this Flask server. Paste the full vault path once; it will be saved in the dropdown.</div>`;
+      input.focus();
+    } catch (e) {
+      status.innerHTML = `<div class="cc-none">Folder selection cancelled.</div>`;
+    }
+  }
+
+  async function loadObsidianVaultCandidates() {
+    try {
+      const r = await fetch("/api/obsidian/vaults");
+      const j = await r.json();
+      (j.vaults || []).forEach(saveObsVault);
+      refreshObsVaultSelect();
+      const input = document.getElementById("obsVaultPath");
+      if (input && !input.value && obsVaults()[0]) input.value = obsVaults()[0];
+    } catch (e) {}
+  }
+
   async function exportObsidian(kind, btn) {
     const status = document.getElementById("obsidianStatus");
     const vault = (document.getElementById("obsVaultPath")?.value || "").trim();
     const folder = (document.getElementById("obsFolder")?.value || "").trim();
     const createVault = !!document.getElementById("obsCreateVault")?.checked;
     if (!vault) { status.innerHTML = `<div class="up-err">Paste an Obsidian vault folder path first.</div>`; return; }
-    try { localStorage.setItem("wb-obs-vault", vault); } catch (e) {}
+    saveObsVault(vault);
     const old = btn.textContent;
     btn.disabled = true; btn.textContent = "Exporting...";
     status.innerHTML = `<div class="up-busy"><span class="spinner spinner-sm"></span> Writing ${esc(kind)} note into Obsidian vault...</div>`;
     try {
       const title = `${mdTitle()} - ${kind}`;
+      const assets = [];
+      if (kind === "graph" || kind === "bundle") {
+        const graphAsset = graphSvgAsset();
+        if (graphAsset) assets.push(graphAsset);
+      }
       const r = await fetch("/api/obsidian/export", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vaultPath: vault, folder, title, createVault, markdown: buildObsidianNote(kind) }),
+        body: JSON.stringify({ vaultPath: vault, folder, title, createVault, markdown: buildObsidianNote(kind), assets }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Obsidian export failed.");

@@ -1,8 +1,8 @@
 // Service worker — caches the app shell so the workbench opens fast and feels app-like.
 // Never caches /api/ (dynamic: extraction, vision, library, jobs). Registers only in a
 // secure context (https / localhost); over plain-HTTP LAN the app still works, just uncached.
-const CACHE = "rheo-workbench-v10-obsidian";
-const SHELL = ["/", "/upload.html", "/styles.css?v=obsidian-1", "/upload.js?v=obsidian-1",
+const CACHE = "rheo-workbench-v15-graph-export";
+const SHELL = ["/", "/upload.html", "/styles.css?v=graph-export-1", "/upload.js?v=graph-export-1",
                "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

@@ -1727,14 +1727,26 @@ body[data-view="compare"] .vector-toolbar {
   display: grid; grid-template-columns: minmax(260px, 1.4fr) minmax(220px, 1fr) 88px 88px auto;
   gap: 10px; align-items: end; margin-top: 12px;
 }
-.obsidian-grid label {
+.obsidian-grid label, .obsidian-field {
   display: grid; gap: 5px; color: var(--muted); font-size: 10.5px; font-weight: 800;
   letter-spacing: .08em; text-transform: uppercase;
 }
+.obsidian-field > span { display: block; }
 .obsidian-grid input[type="text"], .obsidian-grid input[type="number"] {
   width: 100%; min-width: 0; background: var(--glass); color: var(--ink);
   border: 1px solid var(--glass-line); border-radius: 9px; padding: 8px 10px; font: inherit; font-size: 12px;
 }
+.obsidian-vault-picker { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, auto) auto; gap: 7px; align-items: center; }
+.obsidian-vault-picker input { width: 100%; }
+.obsidian-vault-picker select {
+  min-width: 130px; background: var(--glass); color: var(--ink);
+  border: 1px solid var(--glass-line); border-radius: 9px; padding: 8px 10px; font: inherit; font-size: 12px;
+}
+.obsidian-folder-btn {
+  cursor: pointer; white-space: nowrap; border-radius: 9px; padding: 8px 10px; font-size: 11.5px; font-weight: 800;
+  color: var(--ink); border: 1px solid var(--glass-line); background: rgba(255,255,255,.055);
+}
+.obsidian-folder-btn:hover { border-color: rgba(124,92,255,.55); }
 .obsidian-check {
   display: flex !important; grid-auto-flow: column; align-items: center; gap: 7px; text-transform: none !important;
   letter-spacing: 0 !important; line-height: 1.25;
